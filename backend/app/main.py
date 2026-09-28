@@ -1,6 +1,8 @@
 from fastapi import FastAPI
-from app.api.routes import health
-from app.core.config import settings
+from app.api.routes import health, version
+from app.core.config import get_settings
+
+settings = get_settings()
 
 app=FastAPI(
     title=settings.app_name,
@@ -8,3 +10,4 @@ app=FastAPI(
 )
 
 app.include_router(health.router)
+app.include_router(version.router)
