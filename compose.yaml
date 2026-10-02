@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: docpilot
+      POSTGRES_USER: docpilot
+      POSTGRES_PASSWORD: docpilot_dev
+    ports:
+      - "5433:5432"
+    volumes:
+      - docpilot_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docpilot -d docpilot"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  docpilot_postgres_data:

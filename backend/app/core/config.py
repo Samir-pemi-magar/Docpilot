@@ -13,6 +13,14 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = False
 
+    database_url: str
+
+    storage_path: Path = PROJECT_ROOT / "data" / "storage"
+
+    jwt_secret_key: str
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",
         env_file_encoding="utf-8",
@@ -22,5 +30,5 @@ class Settings(BaseSettings):
 
 
 @lru_cache
-def get_settings()-> Settings:
+def get_settings() -> Settings:
     return Settings()
