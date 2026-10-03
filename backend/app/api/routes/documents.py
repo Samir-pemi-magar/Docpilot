@@ -2,7 +2,16 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    status,
+)
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -23,10 +32,12 @@ from app.schemas.document import (
 )
 from app.services.document import (
     create_document,
+    create_document_version,
     delete_document,
     get_document,
     get_document_version,
     list_documents,
+    open_document,
 )
 from app.storage.base import StorageService
 
@@ -75,6 +86,52 @@ async def create_document_endpoint(
         file=file.file,
     )
 
+@router.post(
+    "/{document_id}/versions",
+    response_model=DocumentVersionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_document_version_endpoint(
+    organization_id: uuid.UUID,
+    document_id: uuid.UUID,
+    file: UploadFile = File(...),
+    access: OrganizationAccess = Depends(
+        require_organization_roles(
+            MembershipRole.OWNER,
+            MembershipRole.ADMIN,
+        )
+    ),
+    db: AsyncSession = Depends(get_db_session),
+    storage: StorageService = Depends(get_storage),
+) -> DocumentVersionResponse:
+    """
+    Upload a new version of an existing document.
+    """
+
+    if not file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A filename is required.",
+        )
+
+    version = await create_document_version(
+        db=db,
+        storage=storage,
+        organization_id=organization_id,
+        document_id=document_id,
+        user_id=access.user.id,
+        original_filename=file.filename,
+        content_type=file.content_type or "application/octet-stream",
+        file=file.file,
+    )
+
+    if version is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found.",
+        )
+
+    return version
 
 @router.get(
     "",
@@ -169,6 +226,60 @@ async def get_document_version_endpoint(
 
     return version
 
+@router.get(
+    "/{document_id}/versions/{version_number}/download",
+)
+async def download_document_version_endpoint(
+    organization_id: uuid.UUID,
+    document_id: uuid.UUID,
+    version_number: int,
+    access: OrganizationAccess = Depends(get_organization_access),
+    db: AsyncSession = Depends(get_db_session),
+    storage: StorageService = Depends(get_storage),
+):
+    """
+    Download the actual file for a document version.
+    """
+
+    if version_number < 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Version number must be positive.",
+        )
+
+    version = await get_document_version(
+        db=db,
+        organization_id=organization_id,
+        document_id=document_id,
+        version_number=version_number,
+    )
+
+    if version is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document version not found.",
+        )
+
+    try:
+        file = open_document(
+            storage=storage,
+            version=version,
+        )
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document file not found in storage.",
+        )
+
+    return StreamingResponse(
+        file,
+        media_type=version.content_type,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{version.original_filename}"'
+            )
+        },
+    )
 
 @router.delete(
     "/{document_id}",

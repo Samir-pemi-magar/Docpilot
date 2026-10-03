@@ -52,6 +52,23 @@ def build_storage_object_key(
     )
 
 
+def cleanup_storage_object(
+    storage: StorageService,
+    storage_key: str,
+    operation: str,
+) -> None:
+    """Best-effort cleanup of a storage object after a failed database operation."""
+
+    try:
+        storage.delete(storage_key)
+    except Exception:
+        logger.exception(
+            "Failed to clean up storage object after %s: %s",
+            operation,
+            storage_key,
+        )
+
+
 async def create_document(
     db: AsyncSession,
     storage: StorageService,
@@ -109,10 +126,11 @@ async def create_document(
     except Exception:
         await db.rollback()
 
-        try:
-            storage.delete(storage_key)
-        except Exception:
-            pass
+        cleanup_storage_object(
+            storage=storage,
+            storage_key=storage_key,
+            operation="document creation failed",
+        )
 
         raise
 
@@ -120,6 +138,93 @@ async def create_document(
 
     return version
 
+
+async def create_document_version(
+    db: AsyncSession,
+    storage: StorageService,
+    organization_id: uuid.UUID,
+    document_id: uuid.UUID,
+    user_id: uuid.UUID,
+    original_filename: str,
+    content_type: str,
+    file: BinaryIO,
+) -> DocumentVersion | None:
+    """Create a new version of an existing document."""
+
+    document_result = await db.execute(
+        select(Document)
+        .where(
+            Document.id == document_id,
+            Document.organization_id == organization_id,
+        )
+        .with_for_update()
+    )
+
+    document = document_result.scalar_one_or_none()
+
+    if document is None:
+        return None
+
+    size_bytes, sha256 = calculate_file_metadata(file)
+
+    latest_version_result = await db.execute(
+        select(DocumentVersion.version_number)
+        .where(DocumentVersion.document_id == document_id)
+        .order_by(DocumentVersion.version_number.desc())
+        .limit(1)
+    )
+
+    latest_version_number = latest_version_result.scalar_one_or_none()
+
+    if latest_version_number is None:
+        raise RuntimeError(
+            "Document has no existing versions."
+        )
+
+    version_number = latest_version_number + 1
+
+    storage_key = build_storage_object_key(
+        organization_id=organization_id,
+        document_id=document_id,
+        version_number=version_number,
+        original_filename=original_filename,
+    )
+
+    try:
+        storage.save(file, storage_key)
+    except Exception:
+        await db.rollback()
+        raise
+
+    version = DocumentVersion(
+        document_id=document_id,
+        uploaded_by_user_id=user_id,
+        version_number=version_number,
+        original_filename=original_filename,
+        content_type=content_type,
+        size_bytes=size_bytes,
+        storage_object_key=storage_key,
+        sha256=sha256,
+    )
+
+    db.add(version)
+
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+
+        cleanup_storage_object(
+            storage=storage,
+            storage_key=storage_key,
+            operation="version creation failed",
+        )
+
+        raise
+
+    await db.refresh(version)
+
+    return version
 
 async def get_document(
     db: AsyncSession,
