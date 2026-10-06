@@ -18,6 +18,19 @@ class DocumentVersionResponse(BaseModel):
     created_at: datetime
 
 
+class DocumentCreateResponse(BaseModel):
+    """Response returned when a document and its first version are created."""
+
+    id: uuid.UUID
+    version_id: uuid.UUID
+    version_number: int
+    original_filename: str
+    content_type: str
+    size_bytes: int
+    sha256: str
+    created_at: datetime
+
+
 class DocumentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

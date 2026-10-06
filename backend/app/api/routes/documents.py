@@ -26,6 +26,7 @@ from app.auth.authorization import (
 from app.db.session import get_db_session
 from app.models.document import Document
 from app.schemas.document import (
+    DocumentCreateResponse,
     DocumentDetailResponse,
     DocumentResponse,
     DocumentVersionResponse,
@@ -49,7 +50,7 @@ router = APIRouter(
 
 @router.post(
     "",
-    response_model=DocumentVersionResponse,
+    response_model=DocumentCreateResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_document_endpoint(
@@ -64,7 +65,7 @@ async def create_document_endpoint(
     ),
     db: AsyncSession = Depends(get_db_session),
     storage: StorageService = Depends(get_storage),
-) -> DocumentVersionResponse:
+) -> DocumentCreateResponse:
     """
     Upload a new document and create its first version.
     """
@@ -75,7 +76,7 @@ async def create_document_endpoint(
             detail="A filename is required.",
         )
 
-    return await create_document(
+    version = await create_document(
         db=db,
         storage=storage,
         organization_id=organization_id,
@@ -85,6 +86,18 @@ async def create_document_endpoint(
         content_type=file.content_type or "application/octet-stream",
         file=file.file,
     )
+
+    return DocumentCreateResponse(
+        id=version.document_id,
+        version_id=version.id,
+        version_number=version.version_number,
+        original_filename=version.original_filename,
+        content_type=version.content_type,
+        size_bytes=version.size_bytes,
+        sha256=version.sha256,
+        created_at=version.created_at,
+    )
+
 
 @router.post(
     "/{document_id}/versions",
@@ -132,6 +145,7 @@ async def create_document_version_endpoint(
         )
 
     return version
+
 
 @router.get(
     "",
@@ -226,6 +240,7 @@ async def get_document_version_endpoint(
 
     return version
 
+
 @router.get(
     "/{document_id}/versions/{version_number}/download",
 )
@@ -236,9 +251,9 @@ async def download_document_version_endpoint(
     access: OrganizationAccess = Depends(get_organization_access),
     db: AsyncSession = Depends(get_db_session),
     storage: StorageService = Depends(get_storage),
-):
+) -> StreamingResponse:
     """
-    Download the actual file for a document version.
+    Download a specific document version.
     """
 
     if version_number < 1:
@@ -273,13 +288,14 @@ async def download_document_version_endpoint(
 
     return StreamingResponse(
         file,
-        media_type=version.content_type,
         headers={
+            "Content-Type": version.content_type,
             "Content-Disposition": (
                 f'attachment; filename="{version.original_filename}"'
-            )
+            ),
         },
     )
+
 
 @router.delete(
     "/{document_id}",
@@ -298,7 +314,7 @@ async def delete_document_endpoint(
     storage: StorageService = Depends(get_storage),
 ) -> None:
     """
-    Delete a document and all of its versions.
+    Delete a document and all of its stored versions.
     """
 
     deleted = await delete_document(

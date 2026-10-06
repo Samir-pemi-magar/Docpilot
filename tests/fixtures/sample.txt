@@ -1,0 +1,6 @@
+DocPilot Test Document
+
+This is a plain text document.
+
+Admissions open on January 1.
+Applications close on March 15.
