@@ -100,3 +100,9 @@ class DocumentVersion(Base):
         back_populates="uploaded_document_versions",
         foreign_keys=[uploaded_by_user_id],
     )
+
+    chunks: Mapped[list["Chunk"]] = relationship(
+        back_populates="document_version",
+        cascade="all, delete-orphan",
+        order_by="Chunk.chunk_index",
+    )
