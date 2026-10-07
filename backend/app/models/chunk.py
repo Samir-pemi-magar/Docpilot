@@ -4,7 +4,8 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -19,6 +20,18 @@ class Chunk(Base):
             "document_version_id",
             "chunk_index",
             name="uq_chunks_document_version_index",
+        ),
+        CheckConstraint(
+            "chunk_index >= 0",
+            name="ck_chunks_chunk_index_nonnegative",
+        ),
+        CheckConstraint(
+            "character_count >= 0",
+            name="ck_chunks_character_count_nonnegative",
+        ),
+        CheckConstraint(
+            "token_count >= 0",
+            name="ck_chunks_token_count_nonnegative",
         ),
     )
 
@@ -87,3 +100,4 @@ class Chunk(Base):
         back_populates="chunk",
         cascade="all, delete-orphan",
     )
+

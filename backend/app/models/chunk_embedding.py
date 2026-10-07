@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -19,6 +19,10 @@ class ChunkEmbedding(Base):
             "chunk_id",
             "model",
             name="uq_chunk_embeddings_chunk_model",
+        ),
+        CheckConstraint(
+            "dimension = 1024",
+            name="ck_chunk_embeddings_dimension_1024",
         ),
     )
 
