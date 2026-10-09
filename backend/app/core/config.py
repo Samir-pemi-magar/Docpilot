@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
 
+    # OpenAI-compatible LLM server; configured independently of embeddings.
+    llm_base_url: str = "http://127.0.0.1:3000/v1"
+    llm_api_key: str | None = None
+    llm_model: str = "docpilot-qwen3-1.7b"
+    llm_timeout_seconds: float = 60.0
+
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",
         env_file_encoding="utf-8",

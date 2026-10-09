@@ -109,7 +109,10 @@ async def test_ingest_document_version(
     )
 
     assert result.document_version.id == version.id
+    assert result.document_version.ingestion_status == "completed"
     assert len(result.chunks) > 0
+
+    from app.services.embedding import list_embeddings
 
     for chunk in result.chunks:
         assert chunk.document_version_id == version.id
@@ -117,14 +120,12 @@ async def test_ingest_document_version(
         assert chunk.character_count > 0
         assert chunk.token_count > 0
 
-    from app.services.embedding import list_embeddings
+        embeddings = await list_embeddings(
+            db=db_session,
+            chunk_id=chunk.id,
+        )
 
-    embeddings = await list_embeddings(
-        db=db_session,
-        chunk_id=result.chunks[0].id,
-    )
-
-    assert len(embeddings) == 1
-    assert embeddings[0].model == "fake-test-model"
-    assert embeddings[0].dimension == 1024
-    assert len(embeddings[0].embedding) == 1024
+        assert len(embeddings) == 1
+        assert embeddings[0].model == "fake-test-model"
+        assert embeddings[0].dimension == 1024
+        assert len(embeddings[0].embedding) == 1024
