@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import (
+    BackgroundTasks,
     APIRouter,
     Depends,
     File,
@@ -16,7 +17,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.dependencies import get_storage
+from app.api.dependencies import (
+    get_document_ingestion_task,
+    get_storage,
+)
 from app.auth.authorization import (
     MembershipRole,
     OrganizationAccess,
@@ -55,6 +59,8 @@ router = APIRouter(
 )
 async def create_document_endpoint(
     organization_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    ingestion_task=Depends(get_document_ingestion_task),
     name: str = Form(...),
     file: UploadFile = File(...),
     access: OrganizationAccess = Depends(
@@ -87,6 +93,8 @@ async def create_document_endpoint(
         file=file.file,
     )
 
+    background_tasks.add_task(ingestion_task, version.id)
+
     return DocumentCreateResponse(
         id=version.document_id,
         version_id=version.id,
@@ -95,6 +103,7 @@ async def create_document_endpoint(
         content_type=version.content_type,
         size_bytes=version.size_bytes,
         sha256=version.sha256,
+        ingestion_status=version.ingestion_status,
         created_at=version.created_at,
     )
 
@@ -107,6 +116,8 @@ async def create_document_endpoint(
 async def create_document_version_endpoint(
     organization_id: uuid.UUID,
     document_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    ingestion_task=Depends(get_document_ingestion_task),
     file: UploadFile = File(...),
     access: OrganizationAccess = Depends(
         require_organization_roles(
@@ -143,6 +154,8 @@ async def create_document_version_endpoint(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Document not found.",
         )
+
+    background_tasks.add_task(ingestion_task, version.id)
 
     return version
 

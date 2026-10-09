@@ -12,7 +12,10 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
-from app.api.dependencies import get_storage
+from app.api.dependencies import (
+    get_document_ingestion_task,
+    get_storage,
+)
 from app.auth.security import hash_password
 from app.db.session import get_db_session
 from app.main import app
@@ -75,6 +78,10 @@ def test_storage(tmp_path):
     return LocalStorage(tmp_path / "storage")
 
 
+async def _skip_document_ingestion(document_version_id):
+    """Keep API tests independent from background processing."""
+
+
 @pytest.fixture
 async def client(db_session, test_storage):
     async def override_get_db_session():
@@ -82,6 +89,9 @@ async def client(db_session, test_storage):
 
     app.dependency_overrides[get_db_session] = override_get_db_session
     app.dependency_overrides[get_storage] = lambda: test_storage
+    app.dependency_overrides[get_document_ingestion_task] = (
+        lambda: _skip_document_ingestion
+    )
 
     transport = ASGITransport(app=app)
 

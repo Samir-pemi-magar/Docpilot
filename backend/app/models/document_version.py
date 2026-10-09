@@ -21,6 +21,11 @@ from app.db.base import Base
 class DocumentVersion(Base):
     __tablename__="document_versions"
     __table_args__=(
+        CheckConstraint(
+            "ingestion_status IN ('pending', 'processing', 'completed', 'failed')",
+            name="ck_document_versions_ingestion_status",
+        ),
+
         UniqueConstraint(
             "document_id",
             "version_number",
@@ -83,6 +88,13 @@ class DocumentVersion(Base):
 
     sha256: Mapped[str] = mapped_column(
         String(64),
+        nullable=False,
+    )
+
+    ingestion_status: Mapped[str] = mapped_column(
+        String(20),
+        default="pending",
+        server_default="pending",
         nullable=False,
     )
 

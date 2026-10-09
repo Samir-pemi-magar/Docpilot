@@ -6,6 +6,8 @@ from app.models.document import Document
 from app.models.document_version import DocumentVersion
 from app.models.membership import Membership
 from app.models.organization import Organization
+from app.api.dependencies import get_document_ingestion_task
+from app.main import app
 
 
 PASSWORD = "TestPassword123!"
@@ -142,6 +144,7 @@ async def test_owner_can_upload_document(
     data = response.json()
 
     assert data["version_number"] == 1
+    assert data["ingestion_status"] == "pending"
     assert data["original_filename"] == "hello.txt"
     assert data["content_type"] == "text/plain"
     assert data["size_bytes"] == len(b"Hello document!")
@@ -436,6 +439,7 @@ async def test_new_version_increments_version_number(
     data = second_response.json()
 
     assert data["version_number"] == 2
+    assert data["ingestion_status"] == "pending"
     assert data["original_filename"] == "updated.txt"
     assert data["size_bytes"] == len(b"Version two")
 
@@ -609,3 +613,78 @@ async def test_cross_organization_version_access_is_denied(
     )
 
     assert response.status_code == 404
+
+
+async def test_upload_and_new_version_schedule_ingestion(
+    client,
+    db_session,
+):
+    owner = await create_user(
+        db_session,
+        "ingestion-owner@example.com",
+        "Ingestion Owner",
+    )
+
+    organization = await create_organization(
+        db_session,
+        owner.id,
+        "Ingestion Test Organization",
+        "ingestion-test-organization",
+    )
+
+    token = await login(client, owner.email)
+    scheduled_version_ids = []
+
+    async def record_ingestion_task(version_id):
+        scheduled_version_ids.append(version_id)
+
+    previous_override = app.dependency_overrides[
+        get_document_ingestion_task
+    ]
+    app.dependency_overrides[get_document_ingestion_task] = (
+        lambda: record_ingestion_task
+    )
+
+    try:
+        first_response = await upload_document(
+            client,
+            token,
+            organization.id,
+            content=b"First version",
+        )
+
+        assert first_response.status_code == 201
+        first_data = first_response.json()
+        assert first_data["ingestion_status"] == "pending"
+
+        document_id = first_data["id"]
+        first_version_id = first_data["version_id"]
+
+        second_response = await client.post(
+            f"/organizations/{organization.id}/documents/"
+            f"{document_id}/versions",
+            files={
+                "file": (
+                    "second.txt",
+                    b"Second version",
+                    "text/plain",
+                )
+            },
+            headers={
+                "Authorization": f"Bearer {token}",
+            },
+        )
+
+        assert second_response.status_code == 201
+        second_data = second_response.json()
+        assert second_data["version_number"] == 2
+        assert second_data["ingestion_status"] == "pending"
+
+        assert scheduled_version_ids == [
+            uuid.UUID(first_version_id),
+            uuid.UUID(second_data["id"]),
+        ]
+    finally:
+        app.dependency_overrides[
+            get_document_ingestion_task
+        ] = previous_override

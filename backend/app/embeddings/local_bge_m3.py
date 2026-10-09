@@ -1,6 +1,5 @@
 from collections.abc import Sequence
 
-from FlagEmbedding import BGEM3FlagModel
 
 from app.embeddings.base import EmbeddingProvider
 from app.embeddings.models import BatchEmbeddingResult, EmbeddingResult
@@ -19,6 +18,9 @@ class LocalBGEEmbeddingProvider(EmbeddingProvider):
         use_fp16: bool = False,
         max_length: int = 1024,
     ) -> None:
+        # Load the heavy embedding dependency only when this provider is created.
+        from FlagEmbedding import BGEM3FlagModel
+
         self.model = BGEM3FlagModel(
             self.MODEL_NAME,
             use_fp16=use_fp16,

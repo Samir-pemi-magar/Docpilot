@@ -4,6 +4,7 @@ import uuid
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from app.embeddings.base import EmbeddingProvider
 from app.models.chunk import Chunk
@@ -36,7 +37,8 @@ async def ingest_document_version(
         storage=storage,
         version=document_version,
     ) as file:
-        processing_result = processor.process(
+        processing_result = await run_in_threadpool(
+            processor.process,
             filename=document_version.original_filename,
             file=file,
         )
@@ -47,8 +49,9 @@ async def ingest_document_version(
         chunks=processing_result.chunks,
     )
 
-    embedding_batch = embedding_provider.embed_documents(
-        [chunk.text for chunk in processing_result.chunks]
+    embedding_batch = await run_in_threadpool(
+        embedding_provider.embed_documents,
+        [chunk.text for chunk in processing_result.chunks],
     )
 
     if len(embedding_batch.embeddings) != len(db_chunks):
@@ -69,6 +72,7 @@ async def ingest_document_version(
         ],
     )
 
+    document_version.ingestion_status = "completed"
     await db.commit()
 
     return IngestionResult(

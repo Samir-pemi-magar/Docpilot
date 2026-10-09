@@ -15,6 +15,7 @@ class DocumentVersionResponse(BaseModel):
     content_type: str
     size_bytes: int
     sha256: str
+    ingestion_status: str
     created_at: datetime
 
 
@@ -28,6 +29,7 @@ class DocumentCreateResponse(BaseModel):
     content_type: str
     size_bytes: int
     sha256: str
+    ingestion_status: str
     created_at: datetime
 
 
