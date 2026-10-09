@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.api.routes import documents, health, organizations, version
+from app.api.routes import documents, health, organizations, search, version
 from app.auth import routes as auth_routes
 from app.core.config import get_settings
 from app.core.lifespan import lifespan
@@ -20,4 +20,5 @@ app.include_router(health.router)
 app.include_router(version.router)
 app.include_router(documents.router)
 app.include_router(organizations.router)
+app.include_router(search.router)
 app.include_router(auth_routes.router)
