@@ -129,3 +129,54 @@ async def test_ingest_document_version(
         assert embeddings[0].model == "fake-test-model"
         assert embeddings[0].dimension == 1024
         assert len(embeddings[0].embedding) == 1024
+
+
+async def test_ingestion_aborts_if_version_was_deleted(
+    db_session,
+    test_user,
+    tmp_path,
+):
+    """Do not persist chunks if the version disappears before persistence."""
+    import pytest
+
+    from app.services.chunk import list_chunks
+
+    storage = LocalStorage(tmp_path / "storage")
+
+    organization = await create_organization(
+        db_session=db_session,
+        owner_id=test_user.id,
+        name="Deleted Version Test Organization",
+        slug="deleted-version-test-organization",
+    )
+
+    version = await create_document(
+        db=db_session,
+        storage=storage,
+        organization_id=organization.id,
+        user_id=test_user.id,
+        name="Deleted version test",
+        original_filename="deleted-version.txt",
+        content_type="text/plain",
+        file=io.BytesIO(
+            b"This file remains in storage after its database version is deleted."
+        ),
+    )
+
+    version_id = version.id
+
+    # Simulate deletion before ingestion reaches its persistence phase.
+    await db_session.delete(version)
+    await db_session.flush()
+
+    with pytest.raises(LookupError, match="was deleted"):
+        await ingest_document_version(
+            db=db_session,
+            storage=storage,
+            document_version=version,
+            processor=create_document_processor(),
+            embedding_provider=FakeEmbeddingProvider(),
+        )
+
+    # The ingestion attempt must not create chunks for the deleted version.
+    assert await list_chunks(db_session, version_id) == []
