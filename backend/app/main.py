@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.api.routes import chat, documents, health, organizations, search, version
+from app.api.routes import chat, conversations, documents, health, organizations, search, version
 from app.auth import routes as auth_routes
 from app.core.config import get_settings
 from app.core.lifespan import lifespan
@@ -22,4 +22,5 @@ app.include_router(documents.router)
 app.include_router(organizations.router)
 app.include_router(search.router)
 app.include_router(chat.router)
+app.include_router(conversations.router)
 app.include_router(auth_routes.router)

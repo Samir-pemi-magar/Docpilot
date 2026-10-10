@@ -12,6 +12,7 @@ class ChatRequest(BaseModel):
 
     query: str = Field(min_length=1, max_length=10_000)
     top_k: int = Field(default=5, ge=1, le=10)
+    conversation_id: uuid.UUID | None = None
 
     @field_validator("query")
     @classmethod
@@ -32,8 +33,9 @@ class ChatSource(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    """An answer and the document chunks supplied as its context."""
+    """An answer, its conversation ID, and its supporting sources."""
 
+    conversation_id: uuid.UUID
     query: str
     answer: str
     sources: list[ChatSource]
