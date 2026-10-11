@@ -14,8 +14,17 @@ __all__ = [
     "Conversation",
     "Document",
     "DocumentVersion",
+    "EvaluationRun",
+    "EvaluationResult",
+    "EvaluationDataset",
+    "EvaluationCase",
     "Membership",
     "Message",
     "Organization",
     "User",
 ]
+
+from app.models.evaluation_dataset import EvaluationDataset
+from app.models.evaluation_case import EvaluationCase
+from app.models.evaluation_run import EvaluationRun
+from app.models.evaluation_result import EvaluationResult
