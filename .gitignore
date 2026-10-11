@@ -19,3 +19,6 @@ build/
 
 # Runtime data
 /data/
+
+# JavaScript dependencies
+**/node_modules/

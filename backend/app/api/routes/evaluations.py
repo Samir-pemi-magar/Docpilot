@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -19,6 +20,8 @@ from app.models.evaluation_run import EvaluationRun
 from app.schemas.evaluations import (
     EvaluationCaseCreate,
     EvaluationCaseResponse,
+    EvaluationCasesImportRequest,
+    EvaluationCasesImportResponse,
     EvaluationCaseUpdate,
     EvaluationDatasetCreate,
     EvaluationDatasetResponse,
@@ -37,9 +40,11 @@ from app.services.evaluations import (
     create_case,
     create_dataset,
     delete_case,
+    delete_cases,
     delete_dataset,
     get_case,
     get_dataset,
+    import_cases,
     list_cases,
     list_datasets,
     update_case,
@@ -139,6 +144,33 @@ async def get_evaluation_datasets(
 
 
 @router.get(
+    "/runs",
+    response_model=list[EvaluationRunResponse],
+)
+async def list_evaluation_runs(
+    organization_id: uuid.UUID,
+    limit: int = Query(default=20, ge=1, le=50),
+    access: OrganizationAccess = Depends(get_organization_access),
+    db: AsyncSession = Depends(get_db_session),
+) -> list[EvaluationRun]:
+    """List recent evaluation runs across this organization's datasets."""
+    result = await db.execute(
+        select(EvaluationRun)
+        .join(
+            EvaluationDataset,
+            EvaluationRun.dataset_id == EvaluationDataset.id,
+        )
+        .where(EvaluationDataset.organization_id == organization_id)
+        .order_by(
+            EvaluationRun.created_at.desc(),
+            EvaluationRun.id.desc(),
+        )
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+@router.get(
     "/{dataset_id}",
     response_model=EvaluationDatasetResponse,
 )
@@ -234,6 +266,211 @@ async def create_evaluation_case(
         ) from exc
 
     return EvaluationCaseResponse(**_case_response_data(case))
+
+
+@router.post(
+    "/{dataset_id}/cases/import",
+    response_model=EvaluationCasesImportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def import_evaluation_cases(
+    organization_id: uuid.UUID,
+    dataset_id: uuid.UUID,
+    payload: EvaluationCasesImportRequest,
+    access: OrganizationAccess = Depends(get_organization_access),
+    db: AsyncSession = Depends(get_db_session),
+) -> EvaluationCasesImportResponse:
+    """Validate and atomically import JSONL evaluation cases."""
+    await _require_dataset(
+        db,
+        organization_id=organization_id,
+        dataset_id=dataset_id,
+    )
+
+    lines = payload.content.splitlines()
+    if len(lines) > 2000:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="A JSONL import may contain at most 2,000 lines.",
+        )
+
+    parsed: list[dict[str, object]] = []
+    errors: list[str] = []
+    seen_ids: dict[str, int] = {}
+    document_uuids: set[uuid.UUID] = set()
+
+    for line_number, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            errors.append(
+                f"Line {line_number}: invalid JSON ({exc.msg})."
+            )
+            continue
+
+        if not isinstance(record, dict):
+            errors.append(
+                f"Line {line_number}: each line must contain a JSON object."
+            )
+            continue
+
+        question = record.get("question")
+        if not isinstance(question, str) or not question.strip():
+            errors.append(
+                f"Line {line_number}: 'question' must be a non-empty string."
+            )
+            continue
+        question = question.strip()
+        if len(question) > 10_000:
+            errors.append(
+                f"Line {line_number}: question exceeds 10,000 characters."
+            )
+            continue
+
+        answer = record.get("reference_answer")
+        if answer is None:
+            answer = record.get("expected_answer")
+        if answer is not None and not isinstance(answer, str):
+            errors.append(
+                f"Line {line_number}: expected answer must be a string or null."
+            )
+            continue
+        if isinstance(answer, str) and len(answer.strip()) > 20_000:
+            errors.append(
+                f"Line {line_number}: reference answer exceeds 20,000 characters."
+            )
+            continue
+        if isinstance(answer, str):
+            answer = answer.strip() or None
+
+        raw_ids = record.get("relevant_document_ids")
+        if raw_ids is not None and (
+            not isinstance(raw_ids, list)
+            or any(not isinstance(value, str) or not value.strip()
+                   for value in raw_ids)
+        ):
+            errors.append(
+                f"Line {line_number}: relevant_document_ids must be a "
+                "list of non-empty strings or null."
+            )
+            continue
+
+        real_ids = []
+        for value in raw_ids or []:
+            try:
+                document_id = uuid.UUID(value)
+            except ValueError:
+                # Labels like DOC-003 are benchmark references, not UUIDs.
+                continue
+            real_ids.append(document_id)
+            document_uuids.add(document_id)
+
+        case_id = record.get("case_id")
+        if case_id is not None:
+            if not isinstance(case_id, str) or not case_id.strip():
+                errors.append(
+                    f"Line {line_number}: case_id must be a non-empty string."
+                )
+                continue
+            case_id = case_id.strip()
+            if case_id in seen_ids:
+                errors.append(
+                    f"Line {line_number}: duplicate case_id {case_id!r}; "
+                    f"first seen on line {seen_ids[case_id]}."
+                )
+                continue
+            seen_ids[case_id] = line_number
+
+        parsed.append({
+            "question": question,
+            "reference_answer": answer,
+            "relevant_document_ids": real_ids or None,
+            # Keep the full original record, including all benchmark fields.
+            "metadata": record,
+        })
+
+    if not parsed and not errors:
+        errors.append("The file contains no JSONL records.")
+
+    if errors:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "JSONL import rejected; no cases were imported. "
+                + " ".join(errors[:20])
+            ),
+        )
+
+    # Reject IDs that already exist in this dataset.
+    if seen_ids:
+        existing = await list_cases(db, dataset_id=dataset_id)
+        existing_ids = {
+            item.metadata_.get("case_id")
+            for item in existing
+            if isinstance(item.metadata_, dict)
+            and isinstance(item.metadata_.get("case_id"), str)
+        }
+        duplicates = sorted(set(seen_ids) & existing_ids)
+        if duplicates:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "JSONL import rejected; no cases were imported. "
+                    "These case_id values already exist: "
+                    + ", ".join(duplicates[:20])
+                ),
+            )
+
+    # Only UUIDs are checked against organization-owned documents.
+    await _validate_relevant_documents(
+        db,
+        organization_id=organization_id,
+        document_ids=list(document_uuids),
+    )
+
+    try:
+        saved = await import_cases(
+            db,
+            dataset_id=dataset_id,
+            cases=parsed,
+        )
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Import conflicted with existing dataset positions; "
+                "no cases were imported."
+            ),
+        ) from exc
+
+    return EvaluationCasesImportResponse(
+        imported_count=len(saved),
+        cases=[
+            EvaluationCaseResponse(**_case_response_data(item))
+            for item in saved
+        ],
+    )
+
+
+@router.delete("/{dataset_id}/cases")
+async def remove_all_evaluation_cases(
+    organization_id: uuid.UUID,
+    dataset_id: uuid.UUID,
+    access: OrganizationAccess = Depends(get_organization_access),
+    db: AsyncSession = Depends(get_db_session),
+) -> dict[str, int]:
+    """Delete all questions in one organization-scoped dataset."""
+    await _require_dataset(
+        db,
+        organization_id=organization_id,
+        dataset_id=dataset_id,
+    )
+    deleted_count = await delete_cases(db, dataset_id=dataset_id)
+    return {"deleted_count": deleted_count}
 
 
 @router.get(

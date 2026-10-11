@@ -112,7 +112,11 @@ async def get_conversation(
     message_result = await db.scalars(
         select(Message)
         .where(Message.conversation_id == conversation.id)
-        .order_by(Message.created_at.asc(), Message.id.asc())
+        .order_by(
+            Message.created_at.asc(),
+            Message.role.desc(),
+            Message.id.asc(),
+        )
     )
     messages = list(message_result)
 
@@ -126,3 +130,33 @@ async def get_conversation(
         message_count=count,
         messages=messages,
     )
+
+
+@router.delete(
+    "/{conversation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_conversation(
+    organization_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    access: OrganizationAccess = Depends(get_organization_access),
+    db: AsyncSession = Depends(get_db_session),
+) -> None:
+    """Delete a conversation owned by the current user in this organization."""
+    result = await db.execute(
+        select(Conversation).where(
+            Conversation.id == conversation_id,
+            Conversation.organization_id == organization_id,
+            Conversation.created_by_user_id == access.user.id,
+        )
+    )
+    conversation = result.scalar_one_or_none()
+
+    if conversation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found.",
+        )
+
+    await db.delete(conversation)
+    await db.commit()

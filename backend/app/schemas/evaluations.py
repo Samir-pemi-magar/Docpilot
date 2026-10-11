@@ -109,6 +109,15 @@ class EvaluationCaseResponse(BaseModel):
     updated_at: datetime
 
 
+class EvaluationCasesImportRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=5_000_000)
+
+
+class EvaluationCasesImportResponse(BaseModel):
+    imported_count: int
+    cases: list[EvaluationCaseResponse]
+
+
 class EvaluationRunResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

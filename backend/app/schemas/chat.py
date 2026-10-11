@@ -30,12 +30,29 @@ class ChatSource(BaseModel):
     chunk_index: int
     text: str
     distance: float
+    document_id: uuid.UUID | None = None
+    document_name: str = "Document"
+
+
+class ChatTraceStep(BaseModel):
+    """A measured, user-safe step in processing a chat request."""
+
+    id: str
+    type: str
+    tool: str
+    label: str
+    detail: str
+    duration: int = Field(ge=0)
+    timestamp: str
+    result: str
+    status: str = "success"
 
 
 class ChatResponse(BaseModel):
-    """An answer, its conversation ID, and its supporting sources."""
+    """An answer, its conversation ID, sources, and execution trace."""
 
     conversation_id: uuid.UUID
     query: str
     answer: str
     sources: list[ChatSource]
+    trace: list[ChatTraceStep] = Field(default_factory=list)

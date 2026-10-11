@@ -5,7 +5,7 @@ import uuid
 import pytest
 from sqlalchemy import func, select
 
-from app.api.routes.chat import get_llm_client
+from app.api.routes.chat import get_llm_client, _guard_year_specific_admissions_deadline
 from app.auth.security import hash_password
 from app.embeddings.base import EmbeddingProvider
 from app.embeddings.dependencies import get_embedding_provider
@@ -109,8 +109,12 @@ async def create_organization(db_session, owner: User) -> Organization:
     return organization
 
 
-async def add_chunk(db_session, organization, user) -> Chunk:
-    text = "The organization provides admissions information."
+async def add_chunk(
+    db_session,
+    organization,
+    user,
+    text: str = "The organization provides admissions information.",
+) -> Chunk:
 
     document = Document(
         organization_id=organization.id,
@@ -204,6 +208,26 @@ async def test_member_can_chat_and_receive_sources(client, db_session):
     )
     assert data["sources"][0]["text"] == chunk.text
 
+    # Verify the response includes real execution-trace stages.
+    trace = data["trace"]
+    assert isinstance(trace, list)
+    trace_by_id = {step["id"]: step for step in trace}
+    assert {"retrieval", "context", "generation", "persistence"} <= set(
+        trace_by_id
+    )
+
+    for step in trace:
+        assert step["duration"] >= 0
+        assert step["status"] == "success"
+        assert step["tool"]
+        assert step["label"]
+        assert step["detail"]
+        assert step["timestamp"]
+        assert step["result"]
+
+    assert "1 chunk(s)" in trace_by_id["retrieval"]["result"]
+    assert "Generated an answer" in trace_by_id["generation"]["result"]
+
     # Verify the retrieved document text was actually passed to the LLM.
     assert fake_llm.called
     prompt = "\n".join(message["content"] for message in fake_llm.messages)
@@ -268,6 +292,13 @@ async def test_chat_without_retrieved_chunks_does_not_call_llm(
     assert data["sources"] == []
     assert "couldn't find relevant information" in data["answer"]
     assert not fake_llm.called
+
+    trace_by_id = {step["id"]: step for step in data["trace"]}
+    assert "retrieval" in trace_by_id
+    assert "answer" in trace_by_id
+    assert "0 chunk(s)" in trace_by_id["retrieval"]["result"]
+    assert "fallback" in trace_by_id["answer"]["result"]
+    assert "generation" not in trace_by_id
 
 
 @pytest.mark.asyncio
@@ -738,6 +769,415 @@ async def test_get_conversation_hides_another_users_conversation(
     token = await login(client, member.email)
     response = await client.get(
         f"/organizations/{organization.id}/conversations/{conversation.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Conversation not found."
+
+
+@pytest.mark.asyncio
+async def test_name_introduction_does_not_retrieve_previous_topic(
+    client, db_session
+):
+    user = await create_user(db_session, "chat-name-intro@example.com")
+    organization = await create_organization(db_session, user)
+    await add_chunk(db_session, organization, user)
+
+    fake_llm = FakeLLM()
+    fake_embedding = FakeEmbeddingProvider()
+    install_fakes(fake_llm, fake_embedding)
+    token = await login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    endpoint = f"/organizations/{organization.id}/chat"
+
+    first_response = await client.post(
+        endpoint,
+        json={
+            "query": (
+                "When does Acme Valley University start its academic year, "
+                "and what is the application fee?"
+            )
+        },
+        headers=headers,
+    )
+    assert first_response.status_code == 200
+    conversation_id = first_response.json()["conversation_id"]
+
+    second_response = await client.post(
+        endpoint,
+        json={
+            "query": "my name is Samir remember",
+            "conversation_id": conversation_id,
+        },
+        headers=headers,
+    )
+
+    assert second_response.status_code == 200
+    data = second_response.json()
+    assert data["conversation_id"] == conversation_id
+    assert "Samir" in data["answer"]
+    assert "remember" not in data["answer"].lower().split("samir")[-1][:5]
+    assert data["sources"] == []
+    assert len(fake_embedding.query_texts) == 1
+
+
+@pytest.mark.asyncio
+async def test_remembers_name_after_document_questions(client, db_session):
+    user = await create_user(db_session, "chat-remember-name@example.com")
+    organization = await create_organization(db_session, user)
+    await add_chunk(db_session, organization, user)
+
+    fake_llm = FakeLLM(answer="The document contains the requested information.")
+    fake_embedding = FakeEmbeddingProvider()
+    install_fakes(fake_llm, fake_embedding)
+
+    token = await login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    endpoint = f"/organizations/{organization.id}/chat"
+
+    introduction = await client.post(
+        endpoint,
+        json={"query": "my name is Samir remember"},
+        headers=headers,
+    )
+    assert introduction.status_code == 200
+    conversation_id = introduction.json()["conversation_id"]
+
+    document_questions = [
+        "Summarize the key points in my documents.",
+        "What procedures or policies are documented?",
+        "Find important requirements and explain them.",
+        "What other important information is in the documents?",
+        "Summarize the main topics once more.",
+        "What are the key takeaways?",
+    ]
+
+    for question in document_questions:
+        document_response = await client.post(
+            endpoint,
+            json={
+                "query": question,
+                "conversation_id": conversation_id,
+            },
+            headers=headers,
+        )
+        assert document_response.status_code == 200
+
+    embedding_calls_before_name_question = len(fake_embedding.query_texts)
+
+    name_response = await client.post(
+        endpoint,
+        json={
+            "query": "whats my name again",
+            "conversation_id": conversation_id,
+        },
+        headers=headers,
+    )
+
+    assert name_response.status_code == 200
+    data = name_response.json()
+    assert "Samir" in data["answer"]
+    assert data["sources"] == []
+    assert len(fake_embedding.query_texts) == embedding_calls_before_name_question
+
+
+@pytest.mark.asyncio
+async def test_capital_question_uses_general_knowledge_without_retrieval(
+    client, db_session
+):
+    user = await create_user(db_session, "chat-capital@example.com")
+    organization = await create_organization(db_session, user)
+
+    fake_llm = FakeLLM(answer="Kathmandu is the capital of Nepal.")
+    fake_embedding = FakeEmbeddingProvider()
+    install_fakes(fake_llm, fake_embedding)
+    token = await login(client, user.email)
+
+    response = await client.post(
+        f"/organizations/{organization.id}/chat",
+        json={"query": "What is the capital of Nepal?"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["answer"] == fake_llm.answer
+    assert data["sources"] == []
+    assert fake_llm.called
+    assert fake_embedding.query_texts == []
+
+    trace_by_id = {step["id"]: step for step in data["trace"]}
+    assert trace_by_id["retrieval"]["label"] == "General-knowledge question"
+
+
+@pytest.mark.asyncio
+async def test_general_knowledge_question_uses_llm_without_document_chunks(
+    client, db_session
+):
+    user = await create_user(db_session, "chat-everest@example.com")
+    organization = await create_organization(db_session, user)
+
+    fake_llm = FakeLLM(
+        answer="Mount Everest is Earth's highest mountain above sea level."
+    )
+    fake_embedding = FakeEmbeddingProvider()
+    install_fakes(fake_llm, fake_embedding)
+    token = await login(client, user.email)
+
+    response = await client.post(
+        f"/organizations/{organization.id}/chat",
+        json={"query": "Do you know of Mt Everest?"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["answer"] == fake_llm.answer
+    assert data["sources"] == []
+    assert fake_llm.called
+    assert fake_embedding.query_texts == []
+
+    system_message = fake_llm.messages[0]
+    assert system_message["role"] == "system"
+    assert "general-knowledge assistant" in system_message["content"]
+    assert "Samir" not in "\n".join(
+        message["content"] for message in fake_llm.messages
+    )
+
+    trace_by_id = {step["id"]: step for step in data["trace"]}
+    assert trace_by_id["retrieval"]["label"] == "General-knowledge question"
+    assert "generation" in trace_by_id
+
+
+@pytest.mark.asyncio
+async def test_chat_prompt_distinguishes_general_deadline_from_specific_year(
+    client, db_session
+):
+    user = await create_user(db_session, "chat-deadline-year@example.com")
+    organization = await create_organization(db_session, user)
+
+    handbook_text = (
+        "Admissions open March 1. "
+        "Application deadline: June 30."
+    )
+    await add_chunk(db_session, organization, user, text=handbook_text)
+
+    fake_llm = FakeLLM(
+        answer=(
+            "The handbook lists June 30 as the general application deadline, "
+            "but it does not confirm the deadline for the 2035 cycle."
+        )
+    )
+    fake_embedding = FakeEmbeddingProvider()
+    install_fakes(fake_llm, fake_embedding)
+    token = await login(client, user.email)
+
+    response = await client.post(
+        f"/organizations/{organization.id}/chat",
+        json={
+            "query": (
+                "What is the university's admission deadline for the year 2035?"
+            )
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == (
+        "The retrieved documents list **June 30** as the general application "
+        "deadline, but they do not confirm that this deadline applies to the "
+        "2035 admissions cycle."
+    )
+    assert any(
+        step["id"] == "evidence_guard"
+        for step in response.json()["trace"]
+    )
+    assert fake_llm.called
+
+    system_prompt = fake_llm.messages[0]["content"]
+    assert "specific year" in system_prompt
+    assert "2035" in system_prompt
+    assert "explicitly state" in system_prompt
+    assert "Never fill evidence gaps with guesses" in system_prompt
+
+    user_prompt = "\n".join(
+        message["content"]
+        for message in fake_llm.messages
+        if message["role"] == "user"
+    )
+    assert "year 2035" in user_prompt
+    assert handbook_text in user_prompt
+
+
+def test_deadline_guard_qualifies_general_deadline_for_specific_year():
+    answer = "The 2035 deadline is June 30."
+    result = _guard_year_specific_admissions_deadline(
+        "What is the university's admission deadline for the year 2035?",
+        ["Application deadline: June 30."],
+        answer,
+    )
+    assert "June 30" in result
+    assert "do not confirm" in result
+    assert result != answer
+
+
+def test_deadline_guard_allows_explicit_year_specific_deadline():
+    answer = "The application deadline for 2035 is June 30."
+    result = _guard_year_specific_admissions_deadline(
+        "What is the university's admission deadline for the year 2035?",
+        ["The application deadline for 2035 is June 30."],
+        answer,
+    )
+    assert result == answer
+
+
+def test_deadline_guard_rejects_year_mentioned_with_pending_deadline():
+    answer = "The 2035 deadline is June 30."
+    result = _guard_year_specific_admissions_deadline(
+        "What is the university's admission deadline for the year 2035?",
+        ["The 2035 application deadline is to be announced."],
+        answer,
+    )
+    assert "couldn't confirm" in result
+    assert result != answer
+
+
+def test_deadline_guard_ignores_unrelated_year_question():
+    answer = "The university was founded in 2035."
+    result = _guard_year_specific_admissions_deadline(
+        "When was the university founded in 2035?",
+        ["The university was founded in 2035."],
+        answer,
+    )
+    assert result == answer
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("What is the capital of Nepal?", True),
+        ("Do you know of Mt Everest?", True),
+        ("Kathmandu", False),
+        ("What is the application deadline?", False),
+        ("What is the application fee?", False),
+        ("What are our university policies?", False),
+    ],
+)
+def test_general_knowledge_classifier_routing(query, expected):
+    from app.api.routes.chat import _is_general_knowledge_question
+
+    assert _is_general_knowledge_question(query) is expected
+
+
+@pytest.mark.asyncio
+async def test_user_can_delete_own_conversation_and_messages(client, db_session):
+    user = await create_user(db_session, "conversation-delete-owner@example.com")
+    organization = await create_organization(db_session, user)
+
+    conversation = Conversation(
+        organization_id=organization.id,
+        created_by_user_id=user.id,
+        title="Conversation to delete",
+    )
+    db_session.add(conversation)
+    await db_session.flush()
+
+    message = Message(
+        conversation_id=conversation.id,
+        role="user",
+        content="Please delete this conversation.",
+    )
+    db_session.add(message)
+    await db_session.flush()
+
+    conversation_id = conversation.id
+    message_id = message.id
+    token = await login(client, user.email)
+
+    response = await client.delete(
+        f"/organizations/{organization.id}/conversations/{conversation_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 204
+    assert response.content == b""
+
+    conversation_count = await db_session.scalar(
+        select(func.count())
+        .select_from(Conversation)
+        .where(Conversation.id == conversation_id)
+    )
+    message_count = await db_session.scalar(
+        select(func.count())
+        .select_from(Message)
+        .where(Message.id == message_id)
+    )
+
+    assert conversation_count == 0
+    assert message_count == 0
+
+
+@pytest.mark.asyncio
+async def test_user_cannot_delete_another_users_conversation(
+    client, db_session
+):
+    owner = await create_user(
+        db_session, "conversation-delete-private-owner@example.com"
+    )
+    member = await create_user(
+        db_session, "conversation-delete-private-member@example.com"
+    )
+    organization = await create_organization(db_session, owner)
+
+    db_session.add(
+        Membership(
+            organization_id=organization.id,
+            user_id=member.id,
+            role="member",
+        )
+    )
+
+    conversation = Conversation(
+        organization_id=organization.id,
+        created_by_user_id=owner.id,
+        title="Private conversation",
+    )
+    db_session.add(conversation)
+    await db_session.flush()
+
+    conversation_id = conversation.id
+    token = await login(client, member.email)
+
+    response = await client.delete(
+        f"/organizations/{organization.id}/conversations/{conversation_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Conversation not found."
+
+    remaining = await db_session.scalar(
+        select(func.count())
+        .select_from(Conversation)
+        .where(Conversation.id == conversation_id)
+    )
+    assert remaining == 1
+
+
+@pytest.mark.asyncio
+async def test_deleting_nonexistent_conversation_returns_404(
+    client, db_session
+):
+    user = await create_user(
+        db_session, "conversation-delete-missing@example.com"
+    )
+    organization = await create_organization(db_session, user)
+    token = await login(client, user.email)
+
+    missing_id = uuid.uuid4()
+    response = await client.delete(
+        f"/organizations/{organization.id}/conversations/{missing_id}",
         headers={"Authorization": f"Bearer {token}"},
     )
 

@@ -19,6 +19,8 @@ class RetrievedChunk:
     chunk: Chunk
     distance: float
     model: str
+    document_id: uuid.UUID | None = None
+    document_name: str = "Document"
 
 
 async def retrieve_chunks(
@@ -53,6 +55,8 @@ async def retrieve_chunks(
             Chunk,
             distance.label("distance"),
             ChunkEmbedding.model,
+            Document.id,
+            Document.name,
         )
         .join(
             ChunkEmbedding,
@@ -81,6 +85,9 @@ async def retrieve_chunks(
             chunk=chunk,
             distance=float(distance_value),
             model=embedding_model,
+            document_id=document_id,
+            document_name=document_name,
         )
-        for chunk, distance_value, embedding_model in result.all()
+        for chunk, distance_value, embedding_model, document_id, document_name
+        in result.all()
     ]

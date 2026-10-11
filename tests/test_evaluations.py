@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import json
+
 from app.auth.security import hash_password
 from app.embeddings.dependencies import get_embedding_provider
 from app.embeddings.models import BatchEmbeddingResult, EmbeddingResult
 from app.main import app
 from app.services.evaluation_runner import get_evaluation_llm_client
 from app.models.membership import Membership
+from app.models.evaluation_dataset import EvaluationDataset
+from app.models.evaluation_run import EvaluationRun
 from app.models.organization import Organization
 from app.models.user import User
 
@@ -608,3 +612,293 @@ async def test_unexpected_run_error_marks_persisted_run_failed(
     assert persisted_run is not None
     assert persisted_run.status == "failed"
     assert persisted_run.completed_at is not None
+
+
+async def test_evaluation_run_history_is_organization_scoped(
+    client, db_session
+):
+    owner = await create_user(
+        db_session, "eval-history-owner@example.com", "History Owner"
+    )
+    organization_a = await create_organization(
+        db_session, owner.id, "History Org A", "history-org-a"
+    )
+    organization_b = await create_organization(
+        db_session, owner.id, "History Org B", "history-org-b"
+    )
+    token = await login(client, owner.email)
+
+    dataset_a = EvaluationDataset(
+        organization_id=organization_a.id,
+        created_by_user_id=owner.id,
+        name="Org A dataset",
+    )
+    dataset_b = EvaluationDataset(
+        organization_id=organization_b.id,
+        created_by_user_id=owner.id,
+        name="Org B dataset",
+    )
+    db_session.add_all([dataset_a, dataset_b])
+    await db_session.flush()
+
+    runs_a = [
+        EvaluationRun(
+            dataset_id=dataset_a.id,
+            started_by_user_id=owner.id,
+            status="completed",
+            total_cases=1,
+            completed_cases=1,
+            failed_cases=0,
+            metrics={"hit_rate_at_k": float(i) / 10},
+        )
+        for i in range(3)
+    ]
+    run_b = EvaluationRun(
+        dataset_id=dataset_b.id,
+        started_by_user_id=owner.id,
+        status="completed",
+        total_cases=1,
+        completed_cases=1,
+        failed_cases=0,
+        metrics={"hit_rate_at_k": 1.0},
+    )
+    db_session.add_all([*runs_a, run_b])
+    await db_session.flush()
+
+    response_a = await client.get(
+        f"/organizations/{organization_a.id}/evaluation-datasets/runs?limit=50",
+        headers=auth(token),
+    )
+    assert response_a.status_code == 200, response_a.text
+    history_a = response_a.json()
+    assert len(history_a) == 3
+    assert {item["id"] for item in history_a} == {
+        str(item.id) for item in runs_a
+    }
+    assert str(run_b.id) not in {item["id"] for item in history_a}
+
+    limited = await client.get(
+        f"/organizations/{organization_a.id}/evaluation-datasets/runs?limit=2",
+        headers=auth(token),
+    )
+    assert limited.status_code == 200, limited.text
+    assert len(limited.json()) == 2
+
+    response_b = await client.get(
+        f"/organizations/{organization_b.id}/evaluation-datasets/runs",
+        headers=auth(token),
+    )
+    assert response_b.status_code == 200, response_b.text
+    assert [item["id"] for item in response_b.json()] == [str(run_b.id)]
+
+
+async def test_evaluation_run_history_requires_organization_access(client):
+    response = await client.get(
+        "/organizations/00000000-0000-0000-0000-000000000000/"
+        "evaluation-datasets/runs"
+    )
+    assert response.status_code in (401, 403)
+
+
+
+async def test_jsonl_import_preserves_benchmark_metadata(client, db_session):
+    owner = await create_user(
+        db_session, "jsonl-owner@example.com", "JSONL Owner"
+    )
+    organization = await create_organization(
+        db_session, owner.id, "JSONL Org", "jsonl-org"
+    )
+    token = await login(client, owner.email)
+    created = await create_dataset(client, token, organization.id)
+    assert created.status_code == 201, created.text
+    dataset_id = created.json()["id"]
+    headers = auth(token)
+
+    records = [
+        {
+            "case_id": "FA-04",
+            "category": "factual",
+            "question": "What is the admissions deadline?",
+            "answerable": True,
+            "expected_behavior": "Answer from the official notice.",
+            "expected_answer": "See the current admissions notice.",
+            "relevant_document_ids": ["DOC-003"],
+            "context_document_ids": ["DOC-003", "DOC-008"],
+            "relevant_sections": ["Application timeline"],
+            "essential_facts": [
+                {"fact_id": "F1", "statement": "The deadline is in the notice."}
+            ],
+            "reasoning": "Requires finding the admissions notice.",
+            "difficulty": "medium",
+            "requires_multiple_documents": False,
+            "requires_calculation": False,
+            "involves_historical_policy": False,
+            "policy_versions": [],
+        },
+        {
+            "case_id": "HV-01",
+            "category": "unanswerable",
+            "question": "What is the unpublished internal code?",
+            "answerable": False,
+            "expected_behavior": "State that the information is unavailable.",
+            "expected_answer": None,
+            "relevant_document_ids": [],
+            "essential_facts": [],
+        },
+    ]
+    content = "\n".join(json.dumps(item) for item in records)
+
+    response = await client.post(
+        f"/organizations/{organization.id}/evaluation-datasets/"
+        f"{dataset_id}/cases/import",
+        json={"content": content},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["imported_count"] == 2
+    assert len(payload["cases"]) == 2
+
+    first, second = payload["cases"]
+    assert first["position"] == 0
+    assert second["position"] == 1
+    assert first["question"] == records[0]["question"]
+    assert first["reference_answer"] == records[0]["expected_answer"]
+    assert first["relevant_document_ids"] is None
+    assert first["metadata"]["case_id"] == "FA-04"
+    assert first["metadata"]["relevant_document_ids"] == ["DOC-003"]
+    assert first["metadata"]["context_document_ids"] == ["DOC-003", "DOC-008"]
+    assert first["metadata"]["essential_facts"] == records[0]["essential_facts"]
+    assert first["metadata"]["policy_versions"] == []
+    assert second["metadata"]["answerable"] is False
+
+
+async def test_jsonl_import_rejects_invalid_file_without_partial_import(
+    client, db_session
+):
+    owner = await create_user(
+        db_session, "jsonl-invalid@example.com", "JSONL Invalid"
+    )
+    organization = await create_organization(
+        db_session, owner.id, "JSONL Invalid Org", "jsonl-invalid-org"
+    )
+    token = await login(client, owner.email)
+    created = await create_dataset(client, token, organization.id)
+    assert created.status_code == 201, created.text
+    dataset_id = created.json()["id"]
+    headers = auth(token)
+    base = (
+        f"/organizations/{organization.id}/evaluation-datasets/{dataset_id}"
+    )
+
+    valid_line = json.dumps({
+        "case_id": "VALID-01",
+        "question": "This case must not be saved if another line is invalid.",
+    })
+    response = await client.post(
+        f"{base}/cases/import",
+        json={"content": valid_line + "\n{invalid json"},
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+    assert "Line 2" in response.text
+    assert "no cases were imported" in response.text.lower()
+
+    listed = await client.get(f"{base}/cases", headers=headers)
+    assert listed.status_code == 200, listed.text
+    assert listed.json() == []
+
+
+async def test_jsonl_import_rejects_duplicate_case_ids(client, db_session):
+    owner = await create_user(
+        db_session, "jsonl-duplicate@example.com", "JSONL Duplicate"
+    )
+    organization = await create_organization(
+        db_session, owner.id, "JSONL Duplicate Org", "jsonl-duplicate-org"
+    )
+    token = await login(client, owner.email)
+    created = await create_dataset(client, token, organization.id)
+    assert created.status_code == 201, created.text
+    dataset_id = created.json()["id"]
+    headers = auth(token)
+    base = (
+        f"/organizations/{organization.id}/evaluation-datasets/{dataset_id}"
+    )
+
+    line_one = json.dumps({"case_id": "DUP-01", "question": "First question?"})
+    line_two = json.dumps({"case_id": "DUP-01", "question": "Second question?"})
+    response = await client.post(
+        f"{base}/cases/import",
+        json={"content": line_one + "\n" + line_two},
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+    assert "duplicate case_id" in response.text.lower()
+
+    listed = await client.get(f"{base}/cases", headers=headers)
+    assert listed.status_code == 200, listed.text
+    assert listed.json() == []
+
+
+async def test_delete_all_cases_only_affects_selected_dataset(client, db_session):
+    owner = await create_user(
+        db_session, "eval-bulk-delete@example.com", "Bulk Delete Owner"
+    )
+    organization = await create_organization(
+        db_session, owner.id, "Bulk Delete Org", "bulk-delete-org"
+    )
+    token = await login(client, owner.email)
+
+    first_response = await create_dataset(
+        client, token, organization.id, name="Dataset to clear"
+    )
+    second_response = await create_dataset(
+        client, token, organization.id, name="Dataset to preserve"
+    )
+    assert first_response.status_code == 201, first_response.text
+    assert second_response.status_code == 201, second_response.text
+
+    first_dataset = first_response.json()
+    second_dataset = second_response.json()
+
+    for question in ("Question A", "Question B", "Question C"):
+        response = await client.post(
+            f"/organizations/{organization.id}/evaluation-datasets/"
+            f"{first_dataset['id']}/cases",
+            json={"question": question},
+            headers=auth(token),
+        )
+        assert response.status_code == 201, response.text
+
+    preserved_response = await client.post(
+        f"/organizations/{organization.id}/evaluation-datasets/"
+        f"{second_dataset['id']}/cases",
+        json={"question": "Keep this question"},
+        headers=auth(token),
+    )
+    assert preserved_response.status_code == 201, preserved_response.text
+
+    deleted = await client.delete(
+        f"/organizations/{organization.id}/evaluation-datasets/"
+        f"{first_dataset['id']}/cases",
+        headers=auth(token),
+    )
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json() == {"deleted_count": 3}
+
+    remaining_first = await client.get(
+        f"/organizations/{organization.id}/evaluation-datasets/"
+        f"{first_dataset['id']}/cases",
+        headers=auth(token),
+    )
+    assert remaining_first.status_code == 200, remaining_first.text
+    assert remaining_first.json() == []
+
+    remaining_second = await client.get(
+        f"/organizations/{organization.id}/evaluation-datasets/"
+        f"{second_dataset['id']}/cases",
+        headers=auth(token),
+    )
+    assert remaining_second.status_code == 200, remaining_second.text
+    assert len(remaining_second.json()) == 1
+    assert remaining_second.json()[0]["question"] == "Keep this question"

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.evaluation_case import EvaluationCase
@@ -149,6 +149,44 @@ async def create_case(
     return case
 
 
+async def import_cases(
+    db: AsyncSession,
+    *,
+    dataset_id: uuid.UUID,
+    cases: list[dict[str, Any]],
+) -> list[EvaluationCase]:
+    """Save a validated batch in one database transaction."""
+    result = await db.execute(
+        select(func.max(EvaluationCase.position)).where(
+            EvaluationCase.dataset_id == dataset_id
+        )
+    )
+    maximum = result.scalar_one_or_none()
+    first_position = 0 if maximum is None else maximum + 1
+
+    rows = [
+        EvaluationCase(
+            dataset_id=dataset_id,
+            position=first_position + index,
+            question=item["question"],
+            reference_answer=item["reference_answer"],
+            relevant_document_ids=(
+                [str(value) for value in item["relevant_document_ids"]]
+                if item["relevant_document_ids"] is not None
+                else None
+            ),
+            metadata_=item["metadata"],
+        )
+        for index, item in enumerate(cases)
+    ]
+
+    db.add_all(rows)
+    await db.commit()
+    for row in rows:
+        await db.refresh(row)
+    return rows
+
+
 async def get_case(
     db: AsyncSession,
     *,
@@ -196,3 +234,19 @@ async def delete_case(
 ) -> None:
     await db.delete(case)
     await db.commit()
+
+
+async def delete_cases(
+    db: AsyncSession,
+    *,
+    dataset_id: uuid.UUID,
+) -> int:
+    """Delete all cases in one dataset and return the number deleted."""
+    result = await db.execute(
+        delete(EvaluationCase).where(
+            EvaluationCase.dataset_id == dataset_id
+        )
+    )
+    deleted_count = result.rowcount or 0
+    await db.commit()
+    return deleted_count

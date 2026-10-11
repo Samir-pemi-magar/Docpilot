@@ -5,10 +5,11 @@ from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
 from app.auth.dependencies import get_current_user
-from app.auth.schemas import LoginRequest, TokenResponse, UserResponse
-from app.auth.security import create_access_token, verify_password
+from app.auth.schemas import LoginRequest, RegisterRequest, TokenResponse, UserResponse
+from app.auth.security import create_access_token, hash_password, verify_password
 from app.core.config import get_settings
 from app.db.session import get_db_session
 from app.models.user import User
@@ -17,6 +18,49 @@ router = APIRouter(
     prefix="/auth",
     tags=["auth"],
 )
+
+
+
+
+@router.post(
+    "/register",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def register(
+    data: RegisterRequest,
+    db: AsyncSession = Depends(get_db_session),
+) -> UserResponse:
+    """Create a user account with a securely hashed password."""
+    email = str(data.email).lower()
+
+    existing = await db.execute(
+        select(User.id).where(User.email == email)
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists.",
+        )
+
+    user = User(
+        email=email,
+        full_name=data.full_name.strip(),
+        password_hash=hash_password(data.password),
+    )
+    db.add(user)
+
+    try:
+        await db.commit()
+        await db.refresh(user)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists.",
+        )
+
+    return user
 
 
 @router.post("/login", response_model=TokenResponse)
