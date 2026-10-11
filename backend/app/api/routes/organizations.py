@@ -15,6 +15,7 @@ from app.auth.authorization import (
     validate_membership_role_assignment,
 )
 from app.auth.dependencies import get_current_user
+from app.api.dependencies import get_storage
 from app.db.session import get_db_session
 from app.models.user import User
 from app.schemas.membership import (
@@ -22,6 +23,7 @@ from app.schemas.membership import (
     MembershipUpdate,
     OrganizationMemberResponse,
 )
+from app.storage.base import StorageService
 from app.schemas.organization import (
     OrganizationCreate,
     OrganizationResponse,
@@ -39,6 +41,7 @@ from app.services.organization import (
     get_organization,
     list_user_organizations,
     update_organization,
+    delete_organization,
 )
 
 router = APIRouter(
@@ -321,3 +324,34 @@ async def remove_member_endpoint(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         )
+
+
+
+@router.delete(
+    "/{organization_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_organization_endpoint(
+    organization_id: uuid.UUID,
+    access: OrganizationAccess = Depends(
+        require_organization_roles(MembershipRole.OWNER)
+    ),
+    db: AsyncSession = Depends(get_db_session),
+    storage: StorageService = Depends(get_storage),
+) -> None:
+    organization = await get_organization(
+        db=db,
+        organization_id=organization_id,
+    )
+
+    if organization is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organization not found.",
+        )
+
+    await delete_organization(
+        db=db,
+        organization=organization,
+        storage=storage,
+    )

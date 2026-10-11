@@ -1035,3 +1035,155 @@ async def test_member_cannot_change_membership_role(
     assert response.json()["detail"] == (
         "You do not have permission to perform this action."
     )
+
+
+async def test_owner_can_delete_organization(
+    client,
+    test_user,
+    db_session,
+):
+    token = await login(client, test_user.email)
+
+    create_response = await client.post(
+        "/organizations",
+        json={
+            "name": "Organization Deletion Test",
+            "slug": "organization-deletion-test",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert create_response.status_code == 201
+    organization_id = uuid.UUID(create_response.json()["id"])
+
+    response = await client.delete(
+        f"/organizations/{organization_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert await db_session.get(Organization, organization_id) is None
+
+
+async def test_admin_and_member_cannot_delete_organization(
+    client,
+    test_user,
+    db_session,
+):
+    owner_token = await login(client, test_user.email)
+
+    create_response = await client.post(
+        "/organizations",
+        json={
+            "name": "Protected Organization",
+            "slug": "protected-organization",
+        },
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+
+    assert create_response.status_code == 201
+    organization_id = uuid.UUID(create_response.json()["id"])
+
+    users = [
+        User(
+            email="delete-admin@example.com",
+            password_hash=hash_password("TestPassword123!"),
+            full_name="Delete Admin",
+            is_active=True,
+        ),
+        User(
+            email="delete-member@example.com",
+            password_hash=hash_password("TestPassword123!"),
+            full_name="Delete Member",
+            is_active=True,
+        ),
+    ]
+    db_session.add_all(users)
+    await db_session.flush()
+
+    db_session.add_all(
+        [
+            Membership(
+                organization_id=organization_id,
+                user_id=users[0].id,
+                role="admin",
+            ),
+            Membership(
+                organization_id=organization_id,
+                user_id=users[1].id,
+                role="member",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    for user in users:
+        token = await login(client, user.email)
+
+        response = await client.delete(
+            f"/organizations/{organization_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 403
+
+    assert await db_session.get(Organization, organization_id) is not None
+
+
+async def test_deleting_organization_removes_uploaded_files(
+    client,
+    test_user,
+    db_session,
+    test_storage,
+):
+    from app.models.document_version import DocumentVersion
+    from sqlalchemy import select
+
+    token = await login(client, test_user.email)
+
+    create_response = await client.post(
+        "/organizations",
+        json={
+            "name": "Storage Cleanup Test",
+            "slug": "storage-cleanup-test",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert create_response.status_code == 201
+    organization_id = uuid.UUID(create_response.json()["id"])
+
+    upload_response = await client.post(
+        f"/organizations/{organization_id}/documents",
+        data={"name": "File to clean up"},
+        files={
+            "file": (
+                "cleanup.txt",
+                b"Organization deletion cleanup test",
+                "text/plain",
+            )
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert upload_response.status_code == 201
+
+    version_result = await db_session.execute(
+        select(DocumentVersion).where(
+            DocumentVersion.document_id
+            == uuid.UUID(upload_response.json()["id"])
+        )
+    )
+    version = version_result.scalar_one()
+    storage_key = version.storage_object_key
+
+    assert test_storage.exists(storage_key)
+
+    delete_response = await client.delete(
+        f"/organizations/{organization_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert delete_response.status_code == 204
+    assert not test_storage.exists(storage_key)

@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import logging
 import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.document import Document
+from app.models.document_version import DocumentVersion
 from app.models.membership import Membership
 from app.models.organization import Organization
+from app.storage.base import StorageService
+
+logger = logging.getLogger(__name__)
 
 
 async def create_organization(
@@ -69,9 +75,37 @@ async def update_organization(
 async def delete_organization(
     db: AsyncSession,
     organization: Organization,
+    storage: StorageService,
 ) -> None:
-    await db.delete(organization)
-    await db.commit()
+    """Delete an organization and clean up its stored document files."""
+    result = await db.execute(
+        select(DocumentVersion.storage_object_key)
+        .join(
+            Document,
+            Document.id == DocumentVersion.document_id,
+        )
+        .where(Document.organization_id == organization.id)
+    )
+    storage_keys = list(result.scalars().all())
+
+    try:
+        await db.delete(organization)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+
+    # Database deletion is committed before touching external storage.
+    for storage_key in storage_keys:
+        try:
+            if storage.exists(storage_key):
+                storage.delete(storage_key)
+        except Exception:
+            logger.exception(
+                "Failed to delete storage object after organization deletion: %s",
+                storage_key,
+            )
+
 
 async def list_user_organizations(
     db: AsyncSession,
