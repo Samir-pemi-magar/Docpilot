@@ -2,6 +2,7 @@ from pathlib import Path
 
 from app.parsers.base import DocumentParser
 from app.parsers.docx import DOCXParser
+from app.parsers.markdown import MarkdownParser
 from app.parsers.pdf import PDFParser
 from app.parsers.txt import TXTParser
 from app.parsers.xlsx import XLSXParser
@@ -23,6 +24,8 @@ class ParserRegistry:
             ".docx": DOCXParser(),
             ".xlsx": XLSXParser(),
             ".txt": TXTParser(),
+            ".md": MarkdownParser(),
+            ".markdown": MarkdownParser(),
         }
 
     def get_for_filename(self, filename: str) -> DocumentParser:
