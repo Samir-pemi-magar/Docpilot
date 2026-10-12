@@ -143,6 +143,7 @@ class EvaluationResultResponse(BaseModel):
     case_id: uuid.UUID | None
     question_snapshot: str
     reference_answer_snapshot: str | None
+    case_metadata_snapshot: dict[str, Any]
     actual_answer: str | None
     retrieved_sources: list[dict[str, Any]]
     metrics: dict[str, Any]

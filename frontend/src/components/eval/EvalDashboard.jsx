@@ -443,6 +443,30 @@ export default function EvalDashboard({ organizationId }) {
                     </div>
                     <p className="mt-2 whitespace-pre-wrap text-sm">{result.question_snapshot}</p>
                     {result.reference_answer_snapshot && <p className="mt-3 whitespace-pre-wrap text-sm"><strong>Reference:</strong> {result.reference_answer_snapshot}</p>}
+                    {result.case_metadata_snapshot &&
+                      Object.keys(result.case_metadata_snapshot).length > 0 && (
+                        <details className="mt-3 rounded border border-[var(--border)] p-3">
+                          <summary className="cursor-pointer text-xs font-semibold">
+                            Benchmark metadata ({Object.keys(result.case_metadata_snapshot).length} fields)
+                          </summary>
+                          <dl className="mt-3 flex flex-col gap-3">
+                            {Object.entries(result.case_metadata_snapshot).map(([key, value]) => (
+                              <div key={key} className="min-w-0">
+                                <dt className="text-xs font-semibold">
+                                  {key.replace(/_/g, " ")}
+                                </dt>
+                                <dd className="mt-1 whitespace-pre-wrap break-words text-xs text-[var(--muted-foreground)]">
+                                  {value === null
+                                    ? "null"
+                                    : typeof value === "object"
+                                      ? JSON.stringify(value, null, 2)
+                                      : String(value)}
+                                </dd>
+                              </div>
+                            ))}
+                          </dl>
+                        </details>
+                      )}
                     <div className="mt-3">
                       <p className="text-xs font-semibold">Generated answer</p>
                       <p className="mt-1 whitespace-pre-wrap text-sm">{result.actual_answer || "No answer produced."}</p>

@@ -55,6 +55,9 @@ class EvaluationResult(Base):
     reference_answer_snapshot: Mapped[str | None] = mapped_column(
         Text, nullable=True
     )
+    case_metadata_snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
     actual_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
     retrieved_sources: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB, nullable=False, default=list, server_default="[]"

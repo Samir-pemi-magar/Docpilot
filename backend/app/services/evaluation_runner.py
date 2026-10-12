@@ -240,6 +240,7 @@ async def run_evaluation(
                 case_id=case.id,
                 question_snapshot=case.question,
                 reference_answer_snapshot=case.reference_answer,
+                case_metadata_snapshot=dict(case.metadata_ or {}),
                 actual_answer=actual_answer,
                 retrieved_sources=[
                     _source_snapshot(item) for item in source_items

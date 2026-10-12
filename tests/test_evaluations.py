@@ -289,6 +289,12 @@ async def test_evaluation_run_results_and_failure_filtering(
         )
     ).scalar_one()
     successful_case.relevant_document_ids = [str(relevant_document_id)]
+    successful_case.metadata_ = {
+        "case_id": "DOC-PILOT-TEST-001",
+        "category": "admissions",
+        "answerable": True,
+        "essential_facts": ["application deadline", "required documents"],
+    }
     await db_session.flush()
 
     fake_source = SimpleNamespace(
@@ -354,6 +360,21 @@ async def test_evaluation_run_results_and_failure_filtering(
     results = all_results.json()
     assert len(results) == 2
     assert {item["status"] for item in results} == {"completed", "failed"}
+
+    completed_result = next(
+        item for item in results if item["status"] == "completed"
+    )
+    assert completed_result["case_metadata_snapshot"] == {
+        "case_id": "DOC-PILOT-TEST-001",
+        "category": "admissions",
+        "answerable": True,
+        "essential_facts": ["application deadline", "required documents"],
+    }
+
+    failed_result = next(
+        item for item in results if item["status"] == "failed"
+    )
+    assert failed_result["case_metadata_snapshot"] == {}
 
     completed_only = await client.get(
         results_url,
