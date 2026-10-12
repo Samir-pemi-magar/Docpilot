@@ -1,10 +1,11 @@
 {
-  "description": "Connect with others effortlessly through a user-friendly platform designed for seamless communication and collaboration, enhancing productivity and engagement.",
+  "description": "A self-hosted, multi-tenant document intelligence and retrieval-augmented generation platform.",
   "robots": {
     "index": false
   },
   "accessibility": {
     "addBypassLinks": false,
     "ignoreReducedMotion": false
-  }
+  },
+  "title": "DocPilot \u2014 Document Intelligence"
 }
