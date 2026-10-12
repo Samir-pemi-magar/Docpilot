@@ -131,25 +131,60 @@ def _build_retrieved_context(
     sources,
     max_chars: int = 12_000,
 ) -> str:
-    """Build bounded context without cutting retrieved chunks in half."""
+    """Build bounded context, preserving complete rows from large tables."""
     if max_chars <= 0:
         return ""
 
     parts: list[str] = []
-    used_chars = 0
 
-    for index, source in enumerate(sources, start=1):
-        part = f"[Source {index}]\n{source.text}"
-        separator = "\n\n" if parts else ""
-        required_chars = len(separator) + len(part)
+    def fits(candidate: str) -> bool:
+        separator_length = 2 if parts else 0
+        current_length = len("\n\n".join(parts))
+        return current_length + separator_length + len(candidate) <= max_chars
 
-        if required_chars > max_chars - used_chars:
+    for source in sources:
+        source_text = source.text.strip()
+        if not source_text:
             continue
 
-        parts.append(part)
-        used_chars += required_chars
+        lines = [line.rstrip() for line in source_text.splitlines()]
+        pipe_indexes = [i for i, line in enumerate(lines) if "|" in line]
 
-    return "\\n\\n".join(parts)
+        # Only treat content as a table when it has a header and at least
+        # one other pipe-delimited line.
+        if len(pipe_indexes) < 2:
+            candidate = f"[Source {len(parts) + 1}]\n{source_text}"
+            if fits(candidate):
+                parts.append(candidate)
+            continue
+
+        header_index = pipe_indexes[0]
+        prefix_lines = lines[:header_index]
+        header_line = lines[header_index]
+        rows = [
+            line for line in lines[header_index + 1:]
+            if "|" in line
+        ]
+
+        label = f"[Source {len(parts) + 1}]"
+        table_lines = [*prefix_lines, header_line]
+        candidate = label + "\n" + "\n".join(table_lines)
+
+        # If the source label, identifying context, and header do not fit,
+        # skip the table rather than expose rows without their header.
+        if not fits(candidate):
+            continue
+
+        for row in rows:
+            trial_lines = [*table_lines, row]
+            trial = label + "\n" + "\n".join(trial_lines)
+            if not fits(trial):
+                break
+            table_lines.append(row)
+
+        parts.append(label + "\n" + "\n".join(table_lines))
+
+    return "\n\n".join(parts)
 
 def _is_general_knowledge_question(query: str) -> bool:
     """Recognize clear general-knowledge questions, not organization queries."""

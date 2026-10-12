@@ -215,6 +215,70 @@ def test_context_builder_skips_oversized_chunk_without_truncating_it():
     assert len(context) <= 100
 
 
+def test_context_builder_keeps_table_header_and_complete_rows():
+    from types import SimpleNamespace
+    from app.api.routes.chat import _build_retrieved_context
+
+    table = SimpleNamespace(
+        text=(
+            "Worksheet: Refunds\n"
+            "Table: Refund Policy\n"
+            "Category | Eligibility | Refund Period\n"
+            "Tuition | Withdraw before classes | 7 days\n"
+            "Housing | Cancel before move-in | 14 days\n"
+            "Meals | Unused meal plan | 30 days"
+        )
+    )
+
+    context = _build_retrieved_context([table], max_chars=150)
+
+    assert "Worksheet: Refunds" in context
+    assert "Table: Refund Policy" in context
+    assert "Category | Eligibility | Refund Period" in context
+    assert len(context) <= 150
+    assert "Tuition | Withdraw before classes | 7 days" in context
+    assert "Housing | Cancel before move-in | 14 days" not in context
+
+
+def test_context_builder_never_includes_table_rows_without_header():
+    from types import SimpleNamespace
+    from app.api.routes.chat import _build_retrieved_context
+
+    table = SimpleNamespace(
+        text=(
+            "Table: Refund Policy\n"
+            "Category | Period\n"
+            "Tuition | 7 days\n"
+            "Housing | 14 days"
+        )
+    )
+
+    context = _build_retrieved_context([table], max_chars=55)
+
+    assert "Table: Refund Policy" in context
+    assert "Category | Period" in context
+    assert "Tuition | 7 days" not in context
+    assert "Housing | 14 days" not in context
+    assert len(context) <= 55
+
+
+def test_context_builder_renumbers_sources_after_skipping_oversized_source():
+    from types import SimpleNamespace
+    from app.api.routes.chat import _build_retrieved_context
+
+    oversized = SimpleNamespace(text="x" * 200)
+    smaller = SimpleNamespace(text="A short relevant paragraph.")
+
+    context = _build_retrieved_context(
+        [oversized, smaller],
+        max_chars=80,
+    )
+
+    assert "[Source 1]\nA short relevant paragraph." in context
+    assert "[Source 2]" not in context
+    assert len(context) <= 80
+
+
 @pytest.mark.asyncio
 async def test_member_can_chat_and_receive_sources(client, db_session):
     user = await create_user(db_session, "chat-owner@example.com")
