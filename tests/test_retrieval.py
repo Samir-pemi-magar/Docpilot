@@ -498,3 +498,227 @@ async def test_hybrid_retrieval_promotes_keyword_relevant_chunk(
     assert results[0].chunk.id == relevant.id
     assert results[0].distance is None or results[0].distance >= 0.0
     assert any(item.chunk.id == unrelated.id for item in results)
+
+
+async def test_hybrid_retrieval_prefers_current_policy_unless_history_requested(
+    db_session,
+    test_user,
+):
+    organization = await create_organization(
+        db_session=db_session,
+        owner_id=test_user.id,
+        name="Policy Ranking Organization",
+        slug=f"policy-ranking-{uuid.uuid4()}",
+    )
+
+    current = await create_chunk_with_embedding(
+        db_session,
+        organization_id=organization.id,
+        user_id=test_user.id,
+        text=(
+            "Regular Decision deadline for international undergraduate "
+            "applicants is 2027-12-01 23:59 NST."
+        ),
+        chunk_index=0,
+        vector=make_vector(1.0),
+    )
+    current.metadata_ = {
+        "table_title": "3.1 Application deadlines",
+        "page_number": 2,
+    }
+
+    historical = await create_chunk_with_embedding(
+        db_session,
+        organization_id=organization.id,
+        user_id=test_user.id,
+        text=(
+            "Historical Regular Decision deadline for international "
+            "undergraduate applicants was 2026-11-15 23:59 NST."
+        ),
+        chunk_index=1,
+        vector=make_vector(0.0, 1.0),
+    )
+    historical.metadata_ = {
+        "table_title": (
+            "9. Historical rules (AH-2026.3) - "
+            "SUPERSEDED, FOR REFERENCE ONLY"
+        ),
+        "page_number": 6,
+    }
+
+    await db_session.commit()
+
+    normal_results = await retrieve_hybrid_chunks(
+        db_session,
+        organization_id=organization.id,
+        query="Regular Decision deadline for international undergraduate applicants",
+        query_vector=make_vector(1.0),
+        model=MODEL,
+        top_k=2,
+    )
+
+    assert normal_results[0].chunk.id == current.id
+
+    historical_results = await retrieve_hybrid_chunks(
+        db_session,
+        organization_id=organization.id,
+        query="What was the historical Regular Decision deadline for international undergraduate applicants?",
+        query_vector=make_vector(1.0),
+        model=MODEL,
+        top_k=2,
+    )
+
+    assert historical_results[0].chunk.id == historical.id
+
+
+async def test_hybrid_retrieval_prioritizes_refund_policy_title(
+    db_session,
+    test_user,
+    monkeypatch,
+):
+    from app.services import retrieval
+
+    organization = await create_organization(
+        db_session=db_session,
+        owner_id=test_user.id,
+        name="Refund Policy Ranking Organization",
+        slug=f"refund-policy-ranking-{uuid.uuid4()}",
+    )
+
+    budget = await create_chunk_with_embedding(
+        db_session,
+        organization_id=organization.id,
+        user_id=test_user.id,
+        text="Operating budget: tuition revenue and annual expenses.",
+        chunk_index=0,
+        vector=make_vector(1.0),
+    )
+    budget.element_type = "table"
+    budget.metadata_ = {"table_title": "Annual Budget and Expenses"}
+
+    admissions = await create_chunk_with_embedding(
+        db_session,
+        organization_id=organization.id,
+        user_id=test_user.id,
+        text="Admissions table: application and enrollment requirements.",
+        chunk_index=1,
+        vector=make_vector(0.0, 1.0),
+    )
+    admissions.element_type = "table"
+    admissions.metadata_ = {"table_title": "Admissions Requirements"}
+
+    refund = await create_chunk_with_embedding(
+        db_session,
+        organization_id=organization.id,
+        user_id=test_user.id,
+        text="Refund policy: eligible students receive a refund within 7 days.",
+        chunk_index=2,
+        vector=make_vector(0.0, 0.0),
+    )
+    refund.element_type = "table"
+    refund.metadata_ = {"table_title": "Refund Policy"}
+
+    await db_session.commit()
+
+    async def fake_vector_results(*args, **kwargs):
+        return [
+            retrieval.RetrievedChunk(budget, 0.0, MODEL),
+            retrieval.RetrievedChunk(admissions, 0.2, MODEL),
+            retrieval.RetrievedChunk(refund, 0.4, MODEL),
+        ]
+
+    async def fake_keyword_results(*args, **kwargs):
+        return [
+            retrieval.RetrievedChunk(admissions, None, None),
+            retrieval.RetrievedChunk(budget, None, None),
+            retrieval.RetrievedChunk(refund, None, None),
+        ]
+
+    monkeypatch.setattr(retrieval, "retrieve_chunks", fake_vector_results)
+    monkeypatch.setattr(
+        retrieval,
+        "retrieve_keyword_chunks",
+        fake_keyword_results,
+    )
+
+    results = await retrieve_hybrid_chunks(
+        db_session,
+        organization_id=organization.id,
+        query="When can I get my money back?",
+        query_vector=make_vector(1.0),
+        model=MODEL,
+        top_k=3,
+    )
+
+    assert results[0].chunk.id == refund.id
+
+
+async def test_hybrid_retrieval_applies_stronger_deadline_title_boost(
+    db_session,
+    test_user,
+    monkeypatch,
+):
+    from app.services import retrieval
+
+    organization = await create_organization(
+        db_session=db_session,
+        owner_id=test_user.id,
+        name="Deadline Title Boost Organization",
+        slug=f"deadline-title-boost-{uuid.uuid4()}",
+    )
+
+    matching = await create_chunk_with_embedding(
+        db_session,
+        organization_id=organization.id,
+        user_id=test_user.id,
+        text="The application closes on the stated date.",
+        chunk_index=0,
+        vector=make_vector(1.0),
+    )
+    matching.element_type = "table"
+    matching.metadata_ = {"table_title": "Application Deadlines"}
+
+    other = await create_chunk_with_embedding(
+        db_session,
+        organization_id=organization.id,
+        user_id=test_user.id,
+        text="The application closes on the stated date.",
+        chunk_index=1,
+        vector=make_vector(1.0),
+    )
+    other.element_type = "table"
+    other.metadata_ = {"table_title": "Application Requirements"}
+
+    await db_session.commit()
+
+    async def fake_vector_results(*args, **kwargs):
+        return [
+            retrieval.RetrievedChunk(other, 0.0, MODEL),
+            retrieval.RetrievedChunk(matching, 0.0, MODEL),
+        ]
+
+    async def fake_keyword_results(*args, **kwargs):
+        return [
+            retrieval.RetrievedChunk(other, None, MODEL),
+            retrieval.RetrievedChunk(matching, None, MODEL),
+        ]
+
+    monkeypatch.setattr(retrieval, "retrieve_chunks", fake_vector_results)
+    monkeypatch.setattr(
+        retrieval,
+        "retrieve_keyword_chunks",
+        fake_keyword_results,
+    )
+
+    results = await retrieve_hybrid_chunks(
+        db_session,
+        organization_id=organization.id,
+        query="application deadlines",
+        query_vector=make_vector(1.0),
+        model=MODEL,
+        top_k=2,
+    )
+
+    assert len(results) == 2
+    assert results[0].chunk.id == matching.id
+    assert results[1].chunk.id == other.id

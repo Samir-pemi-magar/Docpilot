@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
@@ -76,26 +76,41 @@ async def ingest_document_version(
             "before ingestion could persist its results."
         )
 
-    db_chunks = await create_chunks(
-        db=db,
-        document_version_id=locked_version.id,
-        chunks=processing_result.chunks,
-    )
+    try:
+        # Replace the previous index only after processing and embedding
+        # have succeeded. The parent row lock serializes ingestion attempts
+        # for this version, and the transaction keeps replacement atomic.
+        await db.execute(
+            delete(Chunk)
+            .where(Chunk.document_version_id == locked_version.id)
+            .execution_options(synchronize_session=False)
+        )
 
-    await create_embeddings(
-        db=db,
-        chunk_embeddings=[
-            (db_chunk.id, embedding)
-            for db_chunk, embedding in zip(
-                db_chunks,
-                embedding_batch.embeddings,
-                strict=True,
-            )
-        ],
-    )
+        db_chunks = await create_chunks(
+            db=db,
+            document_version_id=locked_version.id,
+            chunks=processing_result.chunks,
+        )
 
-    locked_version.ingestion_status = "completed"
-    await db.commit()
+        await create_embeddings(
+            db=db,
+            chunk_embeddings=[
+                (db_chunk.id, embedding)
+                for db_chunk, embedding in zip(
+                    db_chunks,
+                    embedding_batch.embeddings,
+                    strict=True,
+                )
+            ],
+        )
+
+        locked_version.ingestion_status = "completed"
+        await db.commit()
+
+    except Exception:
+        # A failed replacement must not leave the previous index deleted.
+        await db.rollback()
+        raise
 
     return IngestionResult(
         document_version=locked_version,

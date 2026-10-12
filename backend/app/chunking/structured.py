@@ -51,11 +51,21 @@ class StructuredChunker:
     def _context_prefix(element: NormalizedElement) -> str:
         """Return source context that should be included in embedded text."""
 
-        sheet = element.metadata.get("sheet")
-        if sheet is None or not str(sheet).strip():
-            return ""
+        context = []
 
-        return f"Worksheet: {str(sheet).strip()}\n"
+        sheet = element.metadata.get("sheet")
+        if sheet is not None and str(sheet).strip():
+            context.append(f"Worksheet: {str(sheet).strip()}")
+
+        table_title = element.metadata.get("table_title")
+        if table_title is not None and str(table_title).strip():
+            context.append(f"Table: {str(table_title).strip()}")
+
+        page_number = element.metadata.get("page_number")
+        if page_number is not None:
+            context.append(f"Page: {page_number}")
+
+        return "\n".join(context) + ("\n" if context else "")
 
     def _chunk_table(
         self,

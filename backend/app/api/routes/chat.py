@@ -126,6 +126,31 @@ def _guard_year_specific_admissions_deadline(
     )
 
 
+
+def _build_retrieved_context(
+    sources,
+    max_chars: int = 12_000,
+) -> str:
+    """Build bounded context without cutting retrieved chunks in half."""
+    if max_chars <= 0:
+        return ""
+
+    parts: list[str] = []
+    used_chars = 0
+
+    for index, source in enumerate(sources, start=1):
+        part = f"[Source {index}]\n{source.text}"
+        separator = "\n\n" if parts else ""
+        required_chars = len(separator) + len(part)
+
+        if required_chars > max_chars - used_chars:
+            continue
+
+        parts.append(part)
+        used_chars += required_chars
+
+    return "\\n\\n".join(parts)
+
 def _is_general_knowledge_question(query: str) -> bool:
     """Recognize clear general-knowledge questions, not organization queries."""
     import re
@@ -529,21 +554,12 @@ async def chat_with_organization_documents(
                        "The language model was not called.",
             )
     else:
-        # Bound prompt size so large chunks cannot create an unexpectedly
-        # huge prompt.
-        max_context_chars = 3_000
-        context_parts: list[str] = []
-        remaining = max_context_chars
-
-        for index, source in enumerate(sources, start=1):
-            if remaining <= 0:
-                break
-
-            part = f"[Source {index}]\n{source.text[:remaining]}"
-            context_parts.append(part)
-            remaining -= len(part)
-
-        context = "\n\n".join(context_parts)
+        # Bound prompt size while preserving complete retrieved chunks.
+        max_context_chars = 12_000
+        context = _build_retrieved_context(
+            sources,
+            max_chars=max_context_chars,
+        )
 
         if general_knowledge:
             system_prompt = (

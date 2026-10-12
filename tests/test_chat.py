@@ -181,6 +181,40 @@ def install_fakes(
     app.dependency_overrides[get_llm_client] = lambda: llm
 
 
+
+def test_context_builder_keeps_complete_chunks():
+    from types import SimpleNamespace
+    from app.api.routes.chat import _build_retrieved_context
+
+    first = SimpleNamespace(text="Refund policy\nFull refund within 7 days.")
+    second = SimpleNamespace(text="Admissions requirements\nSubmit transcripts.")
+
+    context = _build_retrieved_context([first, second], max_chars=500)
+
+    assert "[Source 1]\n" + first.text in context
+    assert "[Source 2]\n" + second.text in context
+
+
+def test_context_builder_skips_oversized_chunk_without_truncating_it():
+    from types import SimpleNamespace
+    from app.api.routes.chat import _build_retrieved_context
+
+    oversized = SimpleNamespace(text="TABLE-START " + ("row data " * 30))
+    smaller = SimpleNamespace(
+        text="Refund policy: refunds are available within 7 days."
+    )
+
+    context = _build_retrieved_context(
+        [oversized, smaller],
+        max_chars=100,
+    )
+
+    assert "TABLE-START" not in context
+    assert smaller.text in context
+    assert context.endswith(smaller.text)
+    assert len(context) <= 100
+
+
 @pytest.mark.asyncio
 async def test_member_can_chat_and_receive_sources(client, db_session):
     user = await create_user(db_session, "chat-owner@example.com")

@@ -180,3 +180,71 @@ async def test_ingestion_aborts_if_version_was_deleted(
 
     # The ingestion attempt must not create chunks for the deleted version.
     assert await list_chunks(db_session, version_id) == []
+
+
+async def test_reingestion_replaces_chunks_and_embeddings(
+    db_session,
+    test_user,
+    tmp_path,
+):
+    from app.services.chunk import list_chunks
+    from app.services.embedding import list_embeddings
+
+    storage = LocalStorage(tmp_path / "storage")
+
+    organization = await create_organization(
+        db_session=db_session,
+        owner_id=test_user.id,
+        name="Reingestion Test Organization",
+        slug="reingestion-test-organization",
+    )
+
+    version = await create_document(
+        db=db_session,
+        storage=storage,
+        organization_id=organization.id,
+        user_id=test_user.id,
+        name="Reingestion test",
+        original_filename="reingestion.txt",
+        content_type="text/plain",
+        file=io.BytesIO(
+            b"Tuition deadline: January 5, 2028. "
+            b"Residence costs $3900 per term."
+        ),
+    )
+
+    processor = create_document_processor()
+    provider = FakeEmbeddingProvider()
+
+    first = await ingest_document_version(
+        db=db_session,
+        storage=storage,
+        document_version=version,
+        processor=processor,
+        embedding_provider=provider,
+    )
+    first_ids = {chunk.id for chunk in first.chunks}
+    first_count = len(first.chunks)
+
+    assert first_count > 0
+
+    second = await ingest_document_version(
+        db=db_session,
+        storage=storage,
+        document_version=version,
+        processor=processor,
+        embedding_provider=provider,
+    )
+
+    current_chunks = await list_chunks(db_session, version.id)
+
+    assert len(current_chunks) == first_count
+    assert {chunk.id for chunk in current_chunks}.isdisjoint(first_ids)
+    assert {chunk.id for chunk in current_chunks} == {
+        chunk.id for chunk in second.chunks
+    }
+
+    for chunk in current_chunks:
+        embeddings = await list_embeddings(db_session, chunk.id)
+        assert len(embeddings) == 1
+        assert embeddings[0].model == provider.MODEL

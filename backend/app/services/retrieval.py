@@ -178,6 +178,46 @@ async def retrieve_keyword_chunks(
     ]
 
 
+def _requests_historical_policy(query: str) -> bool:
+    """Return whether the query explicitly asks about past policy information."""
+    normalized = query.casefold()
+
+    historical_phrases = (
+        "historical",
+        "history of",
+        "previous policy",
+        "previous version",
+        "prior policy",
+        "prior version",
+        "old policy",
+        "old version",
+        "superseded",
+        "earlier version",
+        "what was",
+        "used to be",
+        "previously",
+        "formerly",
+        "last year's",
+        "last year's policy",
+    )
+
+    return any(phrase in normalized for phrase in historical_phrases)
+
+
+def _is_historical_chunk(chunk: Chunk) -> bool:
+    """Identify chunks explicitly marked as historical in their metadata."""
+    metadata = chunk.metadata_ or {}
+    title = str(metadata.get("table_title", "")).casefold()
+
+    historical_markers = (
+        "historical",
+        "superseded",
+        "for reference only",
+    )
+
+    return any(marker in title for marker in historical_markers)
+
+
 async def retrieve_hybrid_chunks(
     db: AsyncSession,
     *,
@@ -233,9 +273,86 @@ async def retrieve_hybrid_chunks(
                 # Preserve the actual vector distance whenever available.
                 candidates[chunk_id] = item
 
+    # Prefer explicitly current/ordinary evidence for normal policy questions.
+    # Historical evidence remains searchable and receives no penalty when the
+    # user explicitly asks about past policies or versions.
+    historical_query = _requests_historical_policy(query)
+
+    def normalize_term(term: str) -> str:
+        term = term.casefold().strip(".,?!:;()[]{}")
+        if len(term) > 4 and term.endswith("ies"):
+            return term[:-3] + "y"
+        if len(term) > 4 and term.endswith("s") and not term.endswith("ss"):
+            return term[:-1]
+        return term
+
+    query_terms = {
+        normalize_term(term)
+        for term in query.split()
+    }
+    query_terms.discard("")
+
+    # Map common ways of expressing an intent to the policy domain.
+    # This is lexical expansion, not a claim about policy contents.
+    normalized_query = " ".join(query.casefold().split())
+    policy_intents = {
+        "refund": (
+            "refund", "money back", "get my money back",
+            "give my money back", "receive my money back",
+            "get a reimbursement", "tuition returned",
+        ),
+    }
+
+    matched_policy_intents: set[str] = set()
+    for intent, phrases in policy_intents.items():
+        if any(phrase in normalized_query for phrase in phrases):
+            matched_policy_intents.add(intent)
+            query_terms.add(intent)
+
+    def adjusted_score(chunk_id: uuid.UUID) -> float:
+        score = fused_scores[chunk_id]
+        item = candidates[chunk_id]
+        chunk = item.chunk
+
+        # Prefer tables whose titles match the subject of the question.
+        # This is deliberately limited to table chunks.
+        metadata = chunk.metadata_ or {}
+        table_title = str(metadata.get("table_title", ""))
+        if str(chunk.element_type).casefold() == "table" and table_title:
+            title_terms = {
+                normalize_term(term)
+                for term in table_title.split()
+            }
+            title_terms.discard("")
+            overlap = query_terms & title_terms
+
+            if overlap:
+                # A matching policy-domain title is stronger evidence than
+                # generic word overlap (e.g. "money back" -> "Refund Policy").
+                if overlap & matched_policy_intents:
+                    score *= 3.0
+                elif overlap & {
+                    "deadline", "price", "cost", "rate", "value", "amount",
+                }:
+                    score *= 1.5
+                else:
+                    score *= 1.2
+
+        # Keep the existing historical-policy behavior.
+        if _is_historical_chunk(chunk):
+            if historical_query:
+                score *= 2.0
+            else:
+                score *= 0.5
+
+        return score
+
     ranked_ids = sorted(
         fused_scores,
-        key=lambda chunk_id: (-fused_scores[chunk_id], chunk_id.hex),
+        key=lambda chunk_id: (
+            -adjusted_score(chunk_id),
+            chunk_id.hex,
+        ),
     )
 
     return [candidates[chunk_id] for chunk_id in ranked_ids[:top_k]]

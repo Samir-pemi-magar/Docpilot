@@ -387,3 +387,25 @@ def test_structured_key_value_chunk_includes_worksheet_context() -> None:
     assert "Name: International Office" in chunks[0].text
     assert "Extension: 7319" in chunks[0].text
     assert "Email: international@example.com" in chunks[0].text
+
+
+def test_structured_chunker_uses_real_newlines_in_context_prefix() -> None:
+    document = NormalizedDocument(
+        source_type="pdf",
+        elements=[
+            NormalizedElement(
+                element_type=NormalizedElementType.TABLE,
+                text="Item | Amount\nTuition | $14,200",
+                metadata={
+                    "table_title": "Tuition",
+                    "page_number": 1,
+                },
+            ),
+        ],
+    )
+
+    chunks = make_chunker().chunk(document)
+
+    assert len(chunks) == 1
+    assert "Table: Tuition\nPage: 1\n" in chunks[0].text
+    assert r"Table: Tuition\nPage: 1\n" not in chunks[0].text
