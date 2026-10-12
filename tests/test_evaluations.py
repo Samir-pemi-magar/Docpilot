@@ -6,7 +6,10 @@ from app.auth.security import hash_password
 from app.embeddings.dependencies import get_embedding_provider
 from app.embeddings.models import BatchEmbeddingResult, EmbeddingResult
 from app.main import app
-from app.services.evaluation_runner import get_evaluation_llm_client
+from app.services.evaluation_runner import (
+    _answer_quality_metrics,
+    get_evaluation_llm_client,
+)
 from app.models.membership import Membership
 from app.models.evaluation_dataset import EvaluationDataset
 from app.models.evaluation_run import EvaluationRun
@@ -923,3 +926,47 @@ async def test_delete_all_cases_only_affects_selected_dataset(client, db_session
     assert remaining_second.status_code == 200, remaining_second.text
     assert len(remaining_second.json()) == 1
     assert remaining_second.json()[0]["question"] == "Keep this question"
+
+
+
+def test_essential_fact_coverage_supports_strings_and_fact_objects():
+    metrics = _answer_quality_metrics(
+        "The APPLICATION deadline is in the notice.",
+        {
+            "essential_facts": [
+                "application deadline",
+                {"fact_id": "F1", "statement": "required documents"},
+            ]
+        },
+    )
+
+    assert metrics["essential_fact_coverage"] == 0.5
+
+
+def test_answerability_compliance_checks_abstention():
+    assert _answer_quality_metrics(
+        "I couldn't find relevant information in the documents.",
+        {"answerable": False},
+    ) == {"answerability_compliance": 1.0}
+
+    assert _answer_quality_metrics(
+        "The deadline is listed in the admissions notice.",
+        {"answerable": True},
+    ) == {"answerability_compliance": 1.0}
+
+    assert _answer_quality_metrics(
+        "I couldn't find relevant information.",
+        {"answerable": True},
+    ) == {"answerability_compliance": 0.0}
+
+
+def test_answer_quality_metrics_skip_missing_or_empty_labels():
+    assert _answer_quality_metrics(
+        "A generated answer.",
+        {},
+    ) == {}
+
+    assert _answer_quality_metrics(
+        "A generated answer.",
+        {"essential_facts": [], "answerable": None},
+    ) == {}

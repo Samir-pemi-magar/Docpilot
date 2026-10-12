@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -51,6 +52,69 @@ def _source_snapshot(item: RetrievedChunk) -> dict[str, Any]:
         ),
         "document_name": item.document_name,
     }
+
+
+
+def _normalize_for_matching(text: str) -> str:
+    """Normalize text for simple, case-insensitive lexical comparisons."""
+    return " ".join(re.findall(r"\w+", text.casefold()))
+
+
+def _answer_quality_metrics(
+    answer: str | None,
+    metadata: dict[str, Any],
+) -> dict[str, float]:
+    """Calculate label-dependent lexical diagnostics, not semantic judgments."""
+    metrics: dict[str, float] = {}
+    normalized_answer = _normalize_for_matching(answer or "")
+
+    facts = metadata.get("essential_facts")
+    if isinstance(facts, list):
+        statements: list[str] = []
+        for fact in facts:
+            if isinstance(fact, str):
+                statement = fact
+            elif isinstance(fact, dict):
+                statement = fact.get("statement")
+            else:
+                continue
+
+            if isinstance(statement, str) and statement.strip():
+                normalized_fact = _normalize_for_matching(statement)
+                if normalized_fact:
+                    statements.append(normalized_fact)
+
+        if statements:
+            matched = sum(
+                1 for fact in statements if fact in normalized_answer
+            )
+            metrics["essential_fact_coverage"] = matched / len(statements)
+
+    answerable = metadata.get("answerable")
+    if isinstance(answerable, bool):
+        abstention_phrases = (
+            "couldn't find relevant information",
+            "could not find relevant information",
+            "don't have enough information",
+            "do not have enough information",
+            "information is unavailable",
+            "information is not available",
+            "unable to answer",
+            "cannot answer",
+            "can't answer",
+            "not provided in the documents",
+            "not included in the documents",
+            "no relevant information",
+        )
+        abstained = any(
+            _normalize_for_matching(phrase) in normalized_answer
+            for phrase in abstention_phrases
+        )
+        metrics["answerability_compliance"] = float(
+            abstained if not answerable else not abstained
+        )
+
+    return metrics
 
 
 def _retrieval_metrics(
@@ -142,6 +206,10 @@ async def run_evaluation(
         "recall_at_k": [],
         "reciprocal_rank": [],
     }
+    answer_metric_samples: dict[str, list[float]] = {
+        "essential_fact_coverage": [],
+        "answerability_compliance": [],
+    }
 
     try:
         for case in cases:
@@ -206,18 +274,27 @@ async def run_evaluation(
                         ]
                     )
 
-                case_metrics = _retrieval_metrics(
+                retrieval_case_metrics = _retrieval_metrics(
                     case.relevant_document_ids,
                     source_items,
                 )
+                answer_case_metrics = _answer_quality_metrics(
+                    actual_answer,
+                    dict(case.metadata_ or {}),
+                )
+                case_metrics = {
+                    **retrieval_case_metrics,
+                    **answer_case_metrics,
+                }
 
-                # Aggregate only cases with relevant-document ground truth
-                # that completed successfully.
-                if case.relevant_document_ids:
-                    for metric_name in metric_samples:
-                        metric_samples[metric_name].append(
-                            case_metrics[metric_name]
-                        )
+                # Retrieval and answer-quality metrics have independent labels.
+                # Failed cases never reach this block and contribute nothing.
+                for metric_name, value in retrieval_case_metrics.items():
+                    if metric_name in metric_samples:
+                        metric_samples[metric_name].append(value)
+
+                for metric_name, value in answer_case_metrics.items():
+                    answer_metric_samples[metric_name].append(value)
 
             except Exception:
                 # Keep the case failure distinct from a completed low score.
@@ -268,9 +345,20 @@ async def run_evaluation(
             "retrieval_evaluated_cases": len(
                 metric_samples["hit_rate_at_k"]
             ),
+            "essential_fact_coverage_evaluated_cases": len(
+                answer_metric_samples["essential_fact_coverage"]
+            ),
+            "answerability_compliance_evaluated_cases": len(
+                answer_metric_samples["answerability_compliance"]
+            ),
             **{
                 metric_name: mean(values)
                 for metric_name, values in metric_samples.items()
+                if values
+            },
+            **{
+                metric_name: mean(values)
+                for metric_name, values in answer_metric_samples.items()
                 if values
             },
         }
