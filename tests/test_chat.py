@@ -78,6 +78,21 @@ class FakeLLM:
         return self.answer
 
 
+
+class SequenceFakeLLM:
+    """Return a different response for each LLM call and record every prompt."""
+
+    def __init__(self, responses: list[str]):
+        self.responses = list(responses)
+        self.calls: list[list[dict[str, str]]] = []
+
+    async def generate(self, messages: list[dict[str, str]]) -> str:
+        self.calls.append(messages)
+        if not self.responses:
+            raise AssertionError("Unexpected additional LLM call")
+        return self.responses.pop(0)
+
+
 async def create_user(db_session, email: str) -> User:
     user = User(
         email=email,
@@ -604,16 +619,22 @@ async def test_llm_failure_does_not_persist_a_partial_turn(
 
 
 @pytest.mark.asyncio
-async def test_follow_up_includes_prior_question_not_prior_answer(
+async def test_follow_up_rewrites_question_without_leaking_history_to_answer(
     client, db_session
 ):
     user = await create_user(db_session, "chat-history-context@example.com")
     organization = await create_organization(db_session, user)
     await add_chunk(db_session, organization, user)
 
-    fake_llm = FakeLLM(answer="The information is available.")
+    standalone_question = "When is the application deadline?"
+    fake_llm = SequenceFakeLLM([
+        "First-turn answer.",
+        standalone_question,
+        "The deadline is June 30.",
+    ])
     fake_embedding = FakeEmbeddingProvider()
     install_fakes(fake_llm, fake_embedding)
+
     token = await login(client, user.email)
     headers = {"Authorization": f"Bearer {token}"}
     endpoint = f"/organizations/{organization.id}/chat"
@@ -628,8 +649,6 @@ async def test_follow_up_includes_prior_question_not_prior_answer(
     )
     assert first_response.status_code == 200
 
-    # Make the first assistant response distinctive and verify that the
-    # next request includes the actual stored conversation history.
     conversation_id = uuid.UUID(first_response.json()["conversation_id"])
     result = await db_session.scalars(
         select(Message).where(Message.conversation_id == conversation_id)
@@ -653,24 +672,130 @@ async def test_follow_up_includes_prior_question_not_prior_answer(
     )
 
     assert second_response.status_code == 200
-    assert fake_llm.messages is not None
+    assert second_response.json()["query"] == follow_up
+    assert len(fake_llm.calls) == 3
 
-    prompt = "\n".join(
-        message["content"] for message in fake_llm.messages
+    # Call 2 rewrites the question using the conversation history.
+    rewrite_prompt = "\n".join(
+        message["content"] for message in fake_llm.calls[1]
     )
-    assert first_question in prompt
-    assert first_answer not in prompt
-    assert follow_up in prompt
+    assert first_question in rewrite_prompt
+    assert first_answer in rewrite_prompt
+    assert follow_up in rewrite_prompt
+    assert "standalone question" in rewrite_prompt.lower()
 
-    # The first embedding uses the initial question. The follow-up embedding
-    # must include both the earlier question and the current question.
-    assert len(fake_embedding.query_texts) == 2
-    assert fake_embedding.query_texts[0] == first_question
+    # The embedding provider sees only one standalone question per retrieval.
+    assert fake_embedding.query_texts == [
+        first_question,
+        standalone_question,
+    ]
 
-    contextualized_query = fake_embedding.query_texts[1]
-    assert first_question in contextualized_query
-    assert follow_up in contextualized_query
-    assert "Current question:" in contextualized_query
+    # Call 3 answers using the standalone question and evidence only.
+    final_prompt = "\n".join(
+        message["content"] for message in fake_llm.calls[2]
+    )
+    assert standalone_question in final_prompt
+    assert "Retrieved document excerpts:" in final_prompt
+    assert first_question not in final_prompt
+    assert first_answer not in final_prompt
+    assert follow_up not in final_prompt
+
+    assert fake_llm.responses == []
+
+
+@pytest.mark.asyncio
+async def test_source_reference_returns_saved_attribution_without_llm_call(
+    client, db_session
+):
+    user = await create_user(db_session, "chat-source-attribution@example.com")
+    organization = await create_organization(db_session, user)
+    await add_chunk(
+        db_session,
+        organization,
+        user,
+        text="Private source text about the application deadline.",
+    )
+
+    fake_llm = FakeLLM(answer="The deadline is June 30.")
+    fake_embedding = FakeEmbeddingProvider()
+    install_fakes(fake_llm, fake_embedding)
+
+    token = await login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    endpoint = f"/organizations/{organization.id}/chat"
+
+    first_response = await client.post(
+        endpoint,
+        json={"query": "When is the application deadline?"},
+        headers=headers,
+    )
+    assert first_response.status_code == 200
+    first_data = first_response.json()
+    assert first_data["sources"]
+    first_prompt = fake_llm.messages
+    embedding_calls_after_first_turn = list(fake_embedding.query_texts)
+
+    second_response = await client.post(
+        endpoint,
+        json={
+            "query": "Which document did you use?",
+            "conversation_id": first_data["conversation_id"],
+        },
+        headers=headers,
+    )
+
+    assert second_response.status_code == 200
+    second_data = second_response.json()
+    assert "Admissions Information" in second_data["answer"]
+    assert second_data["sources"] == first_data["sources"]
+
+    # The attribution-only follow-up does not invoke either service again.
+    assert fake_llm.messages == first_prompt
+    assert fake_embedding.query_texts == embedding_calls_after_first_turn
+
+    trace_by_id = {step["id"]: step for step in second_data["trace"]}
+    assert trace_by_id["answer"]["label"] == (
+        "Identified previous answer sources"
+    )
+
+
+@pytest.mark.asyncio
+async def test_source_reference_without_saved_sources_falls_back_to_retrieval(
+    client, db_session
+):
+    user = await create_user(db_session, "chat-source-fallback@example.com")
+    organization = await create_organization(db_session, user)
+    await add_chunk(db_session, organization, user)
+
+    fake_llm = FakeLLM(answer="The document contains admissions information.")
+    fake_embedding = FakeEmbeddingProvider()
+    install_fakes(fake_llm, fake_embedding)
+
+    token = await login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    endpoint = f"/organizations/{organization.id}/chat"
+
+    first_response = await client.post(
+        endpoint,
+        json={"query": "What is the capital of Nepal?"},
+        headers=headers,
+    )
+    assert first_response.status_code == 200
+    assert first_response.json()["sources"] == []
+
+    second_response = await client.post(
+        endpoint,
+        json={
+            "query": "Which document did you use?",
+            "conversation_id": first_response.json()["conversation_id"],
+        },
+        headers=headers,
+    )
+
+    assert second_response.status_code == 200
+    assert second_response.json()["sources"]
+    assert len(fake_embedding.query_texts) == 1
+    assert fake_llm.called
 
 
 @pytest.mark.asyncio
