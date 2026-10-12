@@ -16,7 +16,7 @@ from app.models.evaluation_dataset import EvaluationDataset
 from app.models.evaluation_result import EvaluationResult
 from app.models.evaluation_run import EvaluationRun
 from app.services.llm import OpenAICompatibleLLMClient
-from app.services.retrieval import RetrievedChunk, retrieve_chunks
+from app.services.retrieval import RetrievedChunk, retrieve_hybrid_chunks
 
 
 NO_SOURCES_ANSWER = (
@@ -166,9 +166,10 @@ async def run_evaluation(
                         "The embedding provider returned an incompatible dimension."
                     )
 
-                source_items = await retrieve_chunks(
+                source_items = await retrieve_hybrid_chunks(
                     db,
                     organization_id=dataset.organization_id,
+                    query=case.question,
                     query_vector=query_embedding.vector,
                     model=query_embedding.model,
                     top_k=top_k,

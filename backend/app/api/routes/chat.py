@@ -23,7 +23,7 @@ from app.services.llm import (
     LLMServiceError,
     OpenAICompatibleLLMClient,
 )
-from app.services.retrieval import retrieve_chunks
+from app.services.retrieval import retrieve_hybrid_chunks
 
 router = APIRouter(
     prefix="/organizations/{organization_id}/chat",
@@ -467,9 +467,10 @@ async def chat_with_organization_documents(
                 detail="The embedding provider returned an incompatible dimension.",
             )
 
-        retrieved_chunks = await retrieve_chunks(
+        retrieved_chunks = await retrieve_hybrid_chunks(
             db,
             organization_id=organization_id,
+            query=retrieval_query,
             query_vector=query_embedding.vector,
             model=query_embedding.model,
             top_k=payload.top_k,
@@ -477,7 +478,7 @@ async def chat_with_organization_documents(
         add_trace(
             step_id="retrieval",
             step_type="retrieval",
-            tool="Vector retrieval",
+            tool="Hybrid retrieval",
             label="Retrieved document chunks",
             detail=f"{len(retrieved_chunks)} chunk(s) returned",
             started_at=retrieval_started,
@@ -591,7 +592,15 @@ async def chat_with_organization_documents(
                 "role": "system",
                 "content": system_prompt,
             },
-            *([] if general_knowledge else history_messages),
+            *(
+                []
+                if general_knowledge
+                else [
+                    message
+                    for message in history_messages
+                    if message["role"] == "user"
+                ]
+            ),
             {
                 "role": "user",
                 "content": (

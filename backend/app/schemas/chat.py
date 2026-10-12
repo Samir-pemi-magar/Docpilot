@@ -29,7 +29,7 @@ class ChatSource(BaseModel):
     document_version_id: uuid.UUID
     chunk_index: int
     text: str
-    distance: float
+    distance: float | None
     document_id: uuid.UUID | None = None
     document_name: str = "Document"
 

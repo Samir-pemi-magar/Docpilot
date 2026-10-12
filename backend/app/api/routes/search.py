@@ -18,7 +18,7 @@ from app.schemas.retrieval import (
     SearchResponse,
     SearchResultItem,
 )
-from app.services.retrieval import retrieve_chunks
+from app.services.retrieval import retrieve_hybrid_chunks
 
 router = APIRouter(
     prefix="/organizations/{organization_id}/search",
@@ -54,9 +54,10 @@ async def search_organization_documents(
             detail="The embedding provider returned an incompatible dimension.",
         )
 
-    retrieved_chunks = await retrieve_chunks(
+    retrieved_chunks = await retrieve_hybrid_chunks(
         db,
         organization_id=organization_id,
+        query=payload.query,
         query_vector=query_embedding.vector,
         model=query_embedding.model,
         top_k=payload.top_k,

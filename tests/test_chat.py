@@ -506,7 +506,7 @@ async def test_llm_failure_does_not_persist_a_partial_turn(
 
 
 @pytest.mark.asyncio
-async def test_follow_up_includes_prior_turn_in_llm_prompt(
+async def test_follow_up_includes_prior_question_not_prior_answer(
     client, db_session
 ):
     user = await create_user(db_session, "chat-history-context@example.com")
@@ -561,7 +561,7 @@ async def test_follow_up_includes_prior_turn_in_llm_prompt(
         message["content"] for message in fake_llm.messages
     )
     assert first_question in prompt
-    assert first_answer in prompt
+    assert first_answer not in prompt
     assert follow_up in prompt
 
     # The first embedding uses the initial question. The follow-up embedding

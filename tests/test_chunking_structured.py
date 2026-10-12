@@ -298,3 +298,92 @@ def test_structured_chunker_marks_normal_chunk_within_limit() -> None:
     assert chunks[0].token_count <= 10
     assert chunks[0].metadata["token_limit"] == 10
     assert chunks[0].metadata["token_limit_exceeded"] is False
+
+
+def test_structured_table_chunk_includes_worksheet_context() -> None:
+    document = NormalizedDocument(
+        source_type="xlsx",
+        elements=[
+            NormalizedElement(
+                element_type=NormalizedElementType.TABLE,
+                text=(
+                    "Room Type | Price\n"
+                    "Single | $500\n"
+                    "Double | $800"
+                ),
+                metadata={"sheet": "Room Prices"},
+            ),
+        ],
+    )
+
+    chunks = make_chunker(
+        target_tokens=20,
+        max_tokens=30,
+        overlap_tokens=0,
+    ).chunk(document)
+
+    assert len(chunks) == 1
+    assert "Worksheet: Room Prices" in chunks[0].text
+    assert "Room Type | Price" in chunks[0].text
+    assert "Single | $500" in chunks[0].text
+    assert "Double | $800" in chunks[0].text
+
+
+def test_structured_table_chunks_repeat_worksheet_context_and_header() -> None:
+    document = NormalizedDocument(
+        source_type="xlsx",
+        elements=[
+            NormalizedElement(
+                element_type=NormalizedElementType.TABLE,
+                text=(
+                    "Program | Deadline\n"
+                    "BBA | January 15\n"
+                    "BCA | February 1\n"
+                    "MBA | March 15"
+                ),
+                metadata={"sheet": "Admissions"},
+            ),
+        ],
+    )
+
+    chunks = make_chunker(
+        target_tokens=4,
+        max_tokens=9,
+        overlap_tokens=0,
+    ).chunk(document)
+
+    assert len(chunks) > 1
+    assert all("Worksheet: Admissions" in chunk.text for chunk in chunks)
+    assert all("Program | Deadline" in chunk.text for chunk in chunks)
+    assert "BBA | January 15" in "\n".join(c.text for c in chunks)
+    assert "BCA | February 1" in "\n".join(c.text for c in chunks)
+    assert "MBA | March 15" in "\n".join(c.text for c in chunks)
+
+
+def test_structured_key_value_chunk_includes_worksheet_context() -> None:
+    document = NormalizedDocument(
+        source_type="xlsx",
+        elements=[
+            NormalizedElement(
+                element_type=NormalizedElementType.KEY_VALUE,
+                text=(
+                    "Name: International Office\n"
+                    "Extension: 7319\n"
+                    "Email: international@example.com"
+                ),
+                metadata={"sheet": "Contacts"},
+            ),
+        ],
+    )
+
+    chunks = make_chunker(
+        target_tokens=20,
+        max_tokens=30,
+        overlap_tokens=0,
+    ).chunk(document)
+
+    assert len(chunks) == 1
+    assert "Worksheet: Contacts" in chunks[0].text
+    assert "Name: International Office" in chunks[0].text
+    assert "Extension: 7319" in chunks[0].text
+    assert "Email: international@example.com" in chunks[0].text

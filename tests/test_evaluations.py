@@ -308,7 +308,7 @@ async def test_evaluation_run_results_and_failure_filtering(
         return [fake_source]
 
     monkeypatch.setattr(
-        evaluation_runner, "retrieve_chunks", fake_retrieve_chunks
+        evaluation_runner, "retrieve_hybrid_chunks", fake_retrieve_chunks
     )
 
     app.dependency_overrides[get_embedding_provider] = (
@@ -577,7 +577,7 @@ async def test_unexpected_run_error_marks_persisted_run_failed(
         raise RuntimeError("simulated run-level snapshot failure")
 
     monkeypatch.setattr(
-        evaluation_runner, "retrieve_chunks", fake_retrieve_chunks
+        evaluation_runner, "retrieve_hybrid_chunks", fake_retrieve_chunks
     )
     monkeypatch.setattr(
         evaluation_runner, "_source_snapshot", fail_source_snapshot

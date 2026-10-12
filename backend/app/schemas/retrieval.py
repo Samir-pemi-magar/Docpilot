@@ -28,8 +28,8 @@ class SearchResultItem(BaseModel):
     document_version_id: uuid.UUID
     chunk_index: int
     text: str
-    distance: float
-    model: str
+    distance: float | None
+    model: str | None
 
 
 class SearchResponse(BaseModel):

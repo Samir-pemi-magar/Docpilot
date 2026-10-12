@@ -10,7 +10,11 @@ from app.models.document import Document
 from app.models.document_version import DocumentVersion
 from app.models.membership import Membership
 from app.models.organization import Organization
-from app.services.retrieval import retrieve_chunks
+from app.services.retrieval import (
+    retrieve_chunks,
+    retrieve_hybrid_chunks,
+    retrieve_keyword_chunks,
+)
 
 
 DIMENSION = 1024
@@ -337,3 +341,160 @@ async def test_retrieve_chunks_validates_top_k(
             model=MODEL,
             top_k=101,
         )
+
+
+
+async def test_keyword_retrieval_finds_exact_extension(
+    db_session,
+    test_user,
+):
+    organization = await create_organization(
+        db_session=db_session,
+        owner_id=test_user.id,
+        name="Keyword Retrieval Organization",
+        slug=f"keyword-retrieval-{uuid.uuid4()}",
+    )
+
+    matching = await create_chunk_with_embedding(
+        db_session,
+        organization_id=organization.id,
+        user_id=test_user.id,
+        text=(
+            "Worksheet: Contacts\\n"
+            "Name: International Office\\n"
+            "Extension: 7319\\n"
+            "Email: international@example.com"
+        ),
+        chunk_index=0,
+        vector=make_vector(0.0, 1.0),
+    )
+
+    await create_chunk_with_embedding(
+        db_session,
+        organization_id=organization.id,
+        user_id=test_user.id,
+        text="Worksheet: Meal Plans\\nStandard plan: $731",
+        chunk_index=1,
+        vector=make_vector(1.0, 0.0),
+    )
+
+    await db_session.commit()
+
+    results = await retrieve_keyword_chunks(
+        db_session,
+        organization_id=organization.id,
+        query="7319",
+        top_k=5,
+    )
+
+    assert results
+    assert results[0].chunk.id == matching.id
+    assert "Extension: 7319" in results[0].chunk.text
+    assert results[0].distance is None
+    assert results[0].model is None
+
+
+async def test_keyword_retrieval_is_organization_scoped(
+    db_session,
+    test_user,
+):
+    organization_a = await create_organization(
+        db_session=db_session,
+        owner_id=test_user.id,
+        name="Keyword Organization A",
+        slug=f"keyword-a-{uuid.uuid4()}",
+    )
+
+    organization_b = await create_organization(
+        db_session=db_session,
+        owner_id=test_user.id,
+        name="Keyword Organization B",
+        slug=f"keyword-b-{uuid.uuid4()}",
+    )
+
+    await create_chunk_with_embedding(
+        db_session,
+        organization_id=organization_a.id,
+        user_id=test_user.id,
+        text="General information about student services.",
+        chunk_index=0,
+        vector=make_vector(1.0),
+    )
+
+    matching_b = await create_chunk_with_embedding(
+        db_session,
+        organization_id=organization_b.id,
+        user_id=test_user.id,
+        text="Scholarship deadline is January 15.",
+        chunk_index=0,
+        vector=make_vector(1.0),
+    )
+
+    await db_session.commit()
+
+    results = await retrieve_keyword_chunks(
+        db_session,
+        organization_id=organization_a.id,
+        query="scholarship deadline January 15",
+        top_k=5,
+    )
+
+    assert all(item.chunk.id != matching_b.id for item in results)
+    assert results == []
+
+
+
+async def test_hybrid_retrieval_promotes_keyword_relevant_chunk(
+    db_session,
+    test_user,
+):
+    organization = await create_organization(
+        db_session=db_session,
+        owner_id=test_user.id,
+        name="Hybrid Retrieval Organization",
+        slug=f"hybrid-retrieval-{uuid.uuid4()}",
+    )
+
+    unrelated = await create_chunk_with_embedding(
+        db_session,
+        organization_id=organization.id,
+        user_id=test_user.id,
+        text="General information about student services.",
+        chunk_index=0,
+        vector=make_vector(1.0),
+    )
+
+    relevant = await create_chunk_with_embedding(
+        db_session,
+        organization_id=organization.id,
+        user_id=test_user.id,
+        text="Scholarship deadline is January 15.",
+        chunk_index=1,
+        vector=make_vector(0.0, 1.0),
+    )
+
+    await db_session.commit()
+
+    # Vector search alone prefers the unrelated chunk.
+    vector_results = await retrieve_chunks(
+        db_session,
+        organization_id=organization.id,
+        query_vector=make_vector(1.0),
+        model=MODEL,
+        top_k=2,
+    )
+    assert vector_results[0].chunk.id == unrelated.id
+
+    results = await retrieve_hybrid_chunks(
+        db_session,
+        organization_id=organization.id,
+        query="scholarship deadline January 15",
+        query_vector=make_vector(1.0),
+        model=MODEL,
+        top_k=2,
+    )
+
+    assert results
+    assert results[0].chunk.id == relevant.id
+    assert results[0].distance is None or results[0].distance >= 0.0
+    assert any(item.chunk.id == unrelated.id for item in results)

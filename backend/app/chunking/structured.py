@@ -47,6 +47,16 @@ class StructuredChunker:
 
         return chunks
 
+    @staticmethod
+    def _context_prefix(element: NormalizedElement) -> str:
+        """Return source context that should be included in embedded text."""
+
+        sheet = element.metadata.get("sheet")
+        if sheet is None or not str(sheet).strip():
+            return ""
+
+        return f"Worksheet: {str(sheet).strip()}\n"
+
     def _chunk_table(
         self,
         document: NormalizedDocument,
@@ -54,7 +64,7 @@ class StructuredChunker:
         element_index: int,
         starting_chunk_index: int,
     ) -> list[Chunk]:
-        """Split a table by rows while preserving its header."""
+        """Split a table by rows while preserving its header and context."""
 
         lines = [
             line.strip()
@@ -67,6 +77,7 @@ class StructuredChunker:
 
         header = lines[0]
         rows = lines[1:]
+        context_prefix = self._context_prefix(element)
 
         # A table containing only a header is still a valid chunk.
         if not rows:
@@ -75,7 +86,11 @@ class StructuredChunker:
                     document=document,
                     element=element,
                     element_index=element_index,
-                    text=header,
+                    text=self._join_table_rows(
+                        header,
+                        [],
+                        context_prefix,
+                    ),
                     chunk_index=starting_chunk_index,
                 )
             ]
@@ -88,6 +103,7 @@ class StructuredChunker:
             candidate_text = self._join_table_rows(
                 header,
                 candidate_rows,
+                context_prefix,
             )
 
             if (
@@ -103,6 +119,7 @@ class StructuredChunker:
                         text=self._join_table_rows(
                             header,
                             current_rows,
+                            context_prefix,
                         ),
                         chunk_index=starting_chunk_index + len(chunks),
                     )
@@ -122,6 +139,7 @@ class StructuredChunker:
                     text=self._join_table_rows(
                         header,
                         current_rows,
+                        context_prefix,
                     ),
                     chunk_index=starting_chunk_index + len(chunks),
                 )
@@ -149,40 +167,52 @@ class StructuredChunker:
 
         chunks: list[Chunk] = []
         current_lines: list[str] = []
+        context_prefix = self._context_prefix(element)
 
         for line in lines:
-            line_tokens = self.token_counter.count(line)
+            candidate_lines = [*current_lines, line]
+            candidate_text = self._join_key_value_lines(
+                candidate_lines,
+                context_prefix,
+            )
 
             if (
                 current_lines
-                and self.token_counter.count(
-                    "\n".join([*current_lines, line])
-                ) > self.config.max_tokens
+                and self.token_counter.count(candidate_text)
+                > self.config.max_tokens
             ):
                 chunks.append(
                     self._build_chunk(
                         document=document,
                         element=element,
                         element_index=element_index,
-                        text="\n".join(current_lines),
+                        text=self._join_key_value_lines(
+                            current_lines,
+                            context_prefix,
+                        ),
                         chunk_index=starting_chunk_index + len(chunks),
                     )
                 )
+                current_lines = []
 
-                current_lines = [line]
-                continue
-
-            # A single key-value pair can itself exceed max_tokens.
-            # In that case we preserve the pair as one semantic unit.
             current_lines.append(line)
 
-            if line_tokens > self.config.max_tokens:
+            # Preserve an oversized pair as a semantic unit, including its
+            # context, and let _build_chunk mark the size-limit violation.
+            rendered_text = self._join_key_value_lines(
+                current_lines,
+                context_prefix,
+            )
+            if (
+                self.token_counter.count(rendered_text)
+                > self.config.max_tokens
+            ):
                 chunks.append(
                     self._build_chunk(
                         document=document,
                         element=element,
                         element_index=element_index,
-                        text="\n".join(current_lines),
+                        text=rendered_text,
                         chunk_index=starting_chunk_index + len(chunks),
                     )
                 )
@@ -194,12 +224,24 @@ class StructuredChunker:
                     document=document,
                     element=element,
                     element_index=element_index,
-                    text="\n".join(current_lines),
+                    text=self._join_key_value_lines(
+                        current_lines,
+                        context_prefix,
+                    ),
                     chunk_index=starting_chunk_index + len(chunks),
                 )
             )
 
         return chunks
+
+    @staticmethod
+    def _join_key_value_lines(
+        lines: list[str],
+        context_prefix: str,
+    ) -> str:
+        """Render key-value entries with their source context."""
+
+        return f"{context_prefix}{chr(10).join(lines)}"
 
     def _build_chunk(
         self,
@@ -233,7 +275,9 @@ class StructuredChunker:
     def _join_table_rows(
         header: str,
         rows: list[str],
+        context_prefix: str = "",
     ) -> str:
-        """Build table text with the header followed by data rows."""
+        """Build table text with context, header, and data rows."""
 
-        return "\n".join([header, *rows])
+        table_text = "\n".join([header, *rows])
+        return f"{context_prefix}{table_text}"
