@@ -42,6 +42,7 @@ class DocumentResponse(BaseModel):
     name: str
     created_at: datetime
     updated_at: datetime
+    versions: list[DocumentVersionResponse]
 
 
 class DocumentDetailResponse(DocumentResponse):

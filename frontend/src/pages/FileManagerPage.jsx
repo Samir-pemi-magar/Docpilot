@@ -29,7 +29,10 @@ export default function FileManagerPage({ organizationId }) {
   const [documentToDelete, setDocumentToDelete] = useState(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [versioningId, setVersioningId] = useState(null);
   const fileInput = useRef(null);
+  const versionFileInput = useRef(null);
+  const versionTargetRef = useRef(null);
 
   const loadDocuments = useCallback(async () => {
     if (!organizationId) {
@@ -90,6 +93,36 @@ export default function FileManagerPage({ organizationId }) {
     }
   }
 
+  async function uploadNewVersion(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    const document = versionTargetRef.current;
+    versionTargetRef.current = null;
+
+    if (!file || !document) return;
+
+    setVersioningId(document.id);
+    setError("");
+    setNotice("");
+
+    try {
+      const version = await api.uploadDocumentVersion(
+        organizationId,
+        document.id,
+        file,
+      );
+      await loadDocuments();
+      setNotice(
+        `Uploaded version ${version.version_number} for "${document.name}".`,
+      );
+    } catch (err) {
+      setError(err.message || "Could not upload a new document version.");
+    } finally {
+      setVersioningId(null);
+    }
+  }
+
   function removeDocument(document) {
     if (deletingId) return;
     setError("");
@@ -123,6 +156,13 @@ export default function FileManagerPage({ organizationId }) {
       <Header title="File Manager" />
 
       <section className="flex-1 min-h-0 overflow-y-auto p-4 md:p-6">
+        <input
+          ref={versionFileInput}
+          type="file"
+          className="hidden"
+          onChange={uploadNewVersion}
+          aria-label="Choose a replacement document version"
+        />
         <div className="max-w-5xl mx-auto">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
             <div>
@@ -181,7 +221,7 @@ export default function FileManagerPage({ organizationId }) {
           )}
 
           <div className="rounded-lg border border-[var(--border)] overflow-hidden">
-            <div className="grid grid-cols-[minmax(0,1fr)_100px_150px_72px] gap-3 px-4 py-3 bg-[var(--card)] border-b border-[var(--border)] text-[10px] font-medium uppercase tracking-wider text-[var(--muted-foreground)]">
+            <div className="grid grid-cols-[minmax(0,1fr)_100px_150px_180px] gap-3 px-4 py-3 bg-[var(--card)] border-b border-[var(--border)] text-[10px] font-medium uppercase tracking-wider text-[var(--muted-foreground)]">
               <span>Document</span>
               <span>Size</span>
               <span>Added</span>
@@ -213,7 +253,7 @@ export default function FileManagerPage({ organizationId }) {
               documents.map((document) => (
                 <div
                   key={document.id}
-                  className="grid grid-cols-[minmax(0,1fr)_100px_150px_72px] gap-3 items-center px-4 py-3 border-b last:border-b-0 border-[var(--border)]"
+                  className="grid grid-cols-[minmax(0,1fr)_100px_150px_180px] gap-3 items-center px-4 py-3 border-b last:border-b-0 border-[var(--border)]"
                 >
                   <div className="min-w-0 flex items-center gap-3">
                     <span className="text-xl" aria-hidden="true">📄</span>
@@ -232,11 +272,24 @@ export default function FileManagerPage({ organizationId }) {
                   <span className="text-xs text-[var(--muted-foreground)]">
                     {formatDate(document.created_at)}
                   </span>
-                  <div className="text-right">
+                  <div className="flex justify-end items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        versionTargetRef.current = document;
+                        versionFileInput.current?.click();
+                      }}
+                      disabled={Boolean(versioningId || deletingId)}
+                      aria-label={`Upload new version of ${document.name || "document"}`}
+                      title="Upload a new version"
+                      className="rounded border border-[var(--border)] px-2 py-1 text-xs hover:bg-[var(--muted)] disabled:opacity-50"
+                    >
+                      {versioningId === document.id ? "Uploading…" : "New version"}
+                    </button>
                     <button
                       type="button"
                       onClick={() => removeDocument(document)}
-                      disabled={deletingId === document.id}
+                      disabled={Boolean(deletingId || versioningId)}
                       aria-label={`Delete ${document.name || "document"}`}
                       title="Delete document"
                       className="rounded px-2 py-1 text-xs text-red-400 hover:bg-red-500/10 disabled:opacity-50"

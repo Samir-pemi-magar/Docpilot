@@ -163,6 +163,19 @@ export const api = {
     });
   },
 
+  uploadDocumentVersion(organizationId, documentId, file) {
+    const body = new FormData();
+    body.append("file", file);
+
+    return request(
+      `/organizations/${encodeURIComponent(organizationId)}/documents/${encodeURIComponent(documentId)}/versions`,
+      {
+        method: "POST",
+        body,
+      },
+    );
+  },
+
   deleteDocument(organizationId, documentId) {
     return request(
       `/organizations/${encodeURIComponent(organizationId)}/documents/${encodeURIComponent(documentId)}`,
@@ -190,10 +203,18 @@ export const api = {
       jsonRequest("POST", data)
     );
   },
-  importEvaluationCases(organizationId, datasetId, content) {
+  importEvaluationCases(
+    organizationId,
+    datasetId,
+    content,
+    documentIdMapping = {}
+  ) {
     return request(
       `/organizations/${encodeURIComponent(organizationId)}/evaluation-datasets/${encodeURIComponent(datasetId)}/cases/import`,
-      jsonRequest("POST", { content })
+      jsonRequest("POST", {
+        content,
+        document_id_mapping: documentIdMapping,
+      })
     );
   },
   deleteEvaluationCase(organizationId, datasetId, caseId) {

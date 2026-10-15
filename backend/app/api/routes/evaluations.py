@@ -363,8 +363,12 @@ async def import_evaluation_cases(
             try:
                 document_id = uuid.UUID(value)
             except ValueError:
-                # Labels like DOC-003 are benchmark references, not UUIDs.
-                continue
+                # Resolve benchmark labels only when the importer supplied
+                # an explicit label -> DocPilot document UUID mapping.
+                document_id = payload.document_id_mapping.get(value)
+                if document_id is None:
+                    continue
+
             real_ids.append(document_id)
             document_uuids.add(document_id)
 

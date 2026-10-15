@@ -277,6 +277,11 @@ async def test_uploaded_document_appears_in_list(
     assert len(documents) == 1
     assert documents[0]["name"] == "My Document"
     assert documents[0]["organization_id"] == str(organization.id)
+    assert len(documents[0]["versions"]) == 1
+    assert documents[0]["versions"][0]["size_bytes"] == len(
+        b"Hello document!"
+    )
+    assert documents[0]["versions"][0]["original_filename"] == "hello.txt"
 
 
 async def test_member_can_retrieve_document(

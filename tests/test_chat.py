@@ -1106,6 +1106,43 @@ async def test_remembers_name_after_document_questions(client, db_session):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("query", [
+    "How are you?",
+    "No, how are you?",
+    "nothing. how are you",
+])
+async def test_small_talk_uses_llm_without_document_retrieval(
+    client, db_session, query
+):
+    user = await create_user(db_session, "chat-smalltalk@example.com")
+    organization = await create_organization(db_session, user)
+
+    fake_llm = FakeLLM(answer="I'm doing well, thanks for asking!")
+    fake_embedding = FakeEmbeddingProvider()
+    install_fakes(fake_llm, fake_embedding)
+    token = await login(client, user.email)
+
+    response = await client.post(
+        f"/organizations/{organization.id}/chat",
+        json={"query": query},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["answer"] == fake_llm.answer
+    assert data["sources"] == []
+    assert fake_llm.called
+    assert fake_embedding.query_texts == []
+    assert "conversational assistant" in fake_llm.messages[0]["content"]
+    assert fake_llm.messages[1]["content"] == query
+
+    trace_by_id = {step["id"]: step for step in data["trace"]}
+    assert trace_by_id["retrieval"]["label"] == "Conversational message"
+    assert "generation" in trace_by_id
+
+
+@pytest.mark.asyncio
 async def test_capital_question_uses_general_knowledge_without_retrieval(
     client, db_session
 ):
@@ -1281,6 +1318,9 @@ def test_deadline_guard_ignores_unrelated_year_question():
     [
         ("What is the capital of Nepal?", True),
         ("Do you know of Mt Everest?", True),
+        ("Why is the sky blue?", True),
+        ("Who was Albert Einstein?", True),
+        ("How does gravity work?", True),
         ("Kathmandu", False),
         ("What is the application deadline?", False),
         ("What is the application fee?", False),

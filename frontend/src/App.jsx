@@ -287,21 +287,23 @@ function OrganizationPage({ organizations, onSelect, onCreate, onDeleteOrganizat
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [deletingOrganizationId, setDeletingOrganizationId] = useState(null);
+  const [organizationToDelete, setOrganizationToDelete] = useState(null);
 
-  async function handleDeleteOrganization(organization) {
-    const confirmed = window.confirm(
-      `Permanently delete "${organization.name}"?\n\n` +
-      "This deletes the organization and its associated documents, " +
-      "conversations, and evaluation data. This action cannot be undone."
-    );
-
-    if (!confirmed) return;
-
+  function handleDeleteOrganization(organization) {
     setError("");
-    setDeletingOrganizationId(organization.id);
+    setOrganizationToDelete(organization);
+  }
+
+  async function confirmDeleteOrganization() {
+    if (!organizationToDelete || deletingOrganizationId !== null) return;
+
+    const organizationId = organizationToDelete.id;
+    setError("");
+    setDeletingOrganizationId(organizationId);
 
     try {
-      await onDeleteOrganization(organization.id);
+      await onDeleteOrganization(organizationId);
+      setOrganizationToDelete(null);
     } catch (err) {
       setError(err.message || "Could not delete the organization.");
     } finally {
@@ -530,6 +532,77 @@ function OrganizationPage({ organizations, onSelect, onCreate, onDeleteOrganizat
             Sign out
           </button>
         </div>
+
+        {organizationToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="delete-organization-title"
+              aria-describedby="delete-organization-description"
+              className="w-full max-w-md rounded-xl border border-[var(--border)] bg-[var(--card)] p-6 shadow-2xl"
+            >
+              <div className="mb-4 flex items-start gap-3">
+                <span
+                  aria-hidden="true"
+                  className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-red-500/10 text-xl text-red-400"
+                >
+                  !
+                </span>
+                <div className="min-w-0">
+                  <h2
+                    id="delete-organization-title"
+                    className="text-lg font-semibold text-[var(--foreground)]"
+                  >
+                    Delete organization?
+                  </h2>
+                  <p className="mt-1 break-words text-sm font-medium text-[var(--foreground)]">
+                    {organizationToDelete.name}
+                  </p>
+                </div>
+              </div>
+
+              <p
+                id="delete-organization-description"
+                className="text-sm leading-relaxed text-[var(--muted-foreground)]"
+              >
+                This permanently deletes the organization and its associated
+                documents, conversations, and evaluation data. This action
+                cannot be undone.
+              </p>
+
+              {error && (
+                <p role="alert" className="mt-4 text-sm text-red-400">
+                  {error}
+                </p>
+              )}
+
+              <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOrganizationToDelete(null);
+                    setError("");
+                  }}
+                  disabled={deletingOrganizationId !== null}
+                  className="rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-medium text-[var(--foreground)] transition hover:bg-[var(--muted)] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDeleteOrganization}
+                  disabled={deletingOrganizationId !== null}
+                  className="rounded-lg bg-red-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {deletingOrganizationId === organizationToDelete.id
+                    ? "Deleting…"
+                    : "Delete organization"}
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
       </section>
     </main>
   );

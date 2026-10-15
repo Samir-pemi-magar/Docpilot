@@ -46,6 +46,10 @@ export default function EvalDashboard({ organizationId }) {
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [pendingImport, setPendingImport] = useState(null);
+  const [availableDocuments, setAvailableDocuments] = useState([]);
+  const [documentMapping, setDocumentMapping] = useState({});
+  const [loadingDocuments, setLoadingDocuments] = useState(false);
   const [deletingCaseId, setDeletingCaseId] = useState("");
   const [deletingAllCases, setDeletingAllCases] = useState(false);
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
@@ -154,7 +158,11 @@ export default function EvalDashboard({ organizationId }) {
     }
   }
 
-  async function importCases(event) {
+  function isDocumentUuid(value) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+  }
+
+  async function stageImportFile(event) {
     const input = event.target;
     const file = input.files?.[0];
     if (!file) return;
@@ -174,24 +182,114 @@ export default function EvalDashboard({ organizationId }) {
       return;
     }
 
-    setImporting(true);
     try {
       const content = await file.text();
+      const labels = new Set();
+
+      for (const [index, line] of content.split(/\\r?\\n/).entries()) {
+        if (!line.trim()) continue;
+
+        let record;
+        try {
+          record = JSON.parse(line);
+        } catch {
+          throw new Error(`Invalid JSON on line ${index + 1}.`);
+        }
+
+        const references = record?.relevant_document_ids;
+        if (Array.isArray(references)) {
+          for (const value of references) {
+            if (
+              typeof value === "string" &&
+              value.trim() &&
+              !isDocumentUuid(value)
+            ) {
+              labels.add(value);
+            }
+          }
+        }
+      }
+
+      const uniqueLabels = [...labels].sort((a, b) => a.localeCompare(b));
+      setPendingImport({
+        fileName: file.name,
+        content,
+        labels: uniqueLabels,
+      });
+      setDocumentMapping({});
+
+      if (uniqueLabels.length) {
+        setLoadingDocuments(true);
+        try {
+          const documents = await api.documents(organizationId);
+          setAvailableDocuments(Array.isArray(documents) ? documents : []);
+        } catch (err) {
+          setAvailableDocuments([]);
+          setError(
+            `Could not load organization documents for mapping: ${
+              err.message || "request failed"
+            }`
+          );
+        } finally {
+          setLoadingDocuments(false);
+        }
+      } else {
+        setAvailableDocuments([]);
+      }
+    } catch (err) {
+      setPendingImport(null);
+      setError(err.message || "Could not read the JSONL file.");
+    } finally {
+      input.value = "";
+    }
+  }
+
+  async function confirmImport() {
+    if (!datasetId || !pendingImport || importing) return;
+
+    setError("");
+    setNotice("");
+    setImporting(true);
+
+    const mapping = Object.fromEntries(
+      pendingImport.labels
+        .filter((label) => documentMapping[label])
+        .map((label) => [label, documentMapping[label]])
+    );
+
+    try {
       const result = await api.importEvaluationCases(
         organizationId,
         datasetId,
-        content
+        pendingImport.content,
+        mapping
       );
+
+      const unresolved = pendingImport.labels.length - Object.keys(mapping).length;
+      setPendingImport(null);
+      setDocumentMapping({});
       setRun(null);
       setResults([]);
       await loadCases();
-      setNotice(`Imported ${result.imported_count} evaluation case(s).`);
+
+      setNotice(
+        `Imported ${result.imported_count} evaluation case(s).` +
+          (unresolved
+            ? ` ${unresolved} benchmark label(s) remain unmapped; cases relying on those labels will not count toward retrieval metrics.`
+            : "")
+      );
     } catch (err) {
       setError(err.message || "Could not import JSONL cases.");
     } finally {
       setImporting(false);
-      input.value = "";
     }
+  }
+
+  function cancelImport() {
+    setPendingImport(null);
+    setDocumentMapping({});
+    setAvailableDocuments([]);
+    setError("");
   }
 
   function removeCase(item) {
@@ -327,22 +425,87 @@ export default function EvalDashboard({ organizationId }) {
             <h3 className="mb-2 text-xs font-semibold">Import JSONL benchmark</h3>
             <p className="mb-3 text-xs text-[var(--muted-foreground)]">
               Upload a .jsonl file with one JSON object per line. Each object
-              needs a question field. Benchmark metadata such as case_id,
-              essential_facts, policy flags, and document labels is preserved.
-              Maximum file size: 5 MB.
+              needs a question field. Benchmark metadata is preserved.
+              You can map benchmark document labels to documents in this
+              organization before importing. Maximum file size: 5 MB.
             </p>
             <input
               className={`${field} mb-3`}
               type="file"
               accept=".jsonl,.ndjson,application/x-ndjson,application/json"
-              onChange={importCases}
-              disabled={!datasetId || importing}
-              aria-label="Import evaluation cases from JSONL file"
+              onChange={stageImportFile}
+              disabled={!datasetId || importing || Boolean(pendingImport)}
+              aria-label="Select evaluation cases JSONL file"
             />
-            {importing && (
-              <p role="status" className="text-xs text-[var(--muted-foreground)]">
-                Importing cases…
-              </p>
+
+            {pendingImport && (
+              <div className="flex flex-col gap-3 rounded-md border border-[var(--border)] p-3">
+                <div>
+                  <p className="text-sm font-medium">{pendingImport.fileName}</p>
+                  <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                    {pendingImport.labels.length
+                      ? `${pendingImport.labels.length} unique benchmark document label(s) found. Map each label to the matching document.`
+                      : "No non-UUID document labels found. You can import this file directly."}
+                  </p>
+                </div>
+
+                {loadingDocuments && (
+                  <p role="status" className="text-xs text-[var(--muted-foreground)]">
+                    Loading organization documents…
+                  </p>
+                )}
+
+                {pendingImport.labels.map((label) => (
+                  <label key={label} className="flex flex-col gap-1 text-xs">
+                    <span className="font-medium">{label}</span>
+                    <select
+                      className={field}
+                      value={documentMapping[label] || ""}
+                      onChange={(event) =>
+                        setDocumentMapping((current) => ({
+                          ...current,
+                          [label]: event.target.value,
+                        }))
+                      }
+                      disabled={loadingDocuments || importing}
+                    >
+                      <option value="">Leave unmapped</option>
+                      {availableDocuments.map((document) => (
+                        <option key={document.id} value={document.id}>
+                          {document.name} — {document.id}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
+
+                {pendingImport.labels.length > 0 && (
+                  <p className="text-xs text-[var(--muted-foreground)]">
+                    Unmapped labels are preserved as metadata, but they do not
+                    count as retrieval ground truth. Only map a label when
+                    you have confirmed which document it represents.
+                  </p>
+                )}
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    className={button}
+                    type="button"
+                    onClick={confirmImport}
+                    disabled={importing || loadingDocuments}
+                  >
+                    {importing ? "Importing…" : "Confirm import"}
+                  </button>
+                  <button
+                    className={button}
+                    type="button"
+                    onClick={cancelImport}
+                    disabled={importing}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
             )}
           </div>
           <div className="mt-5 border-t border-[var(--border)] pt-4">
@@ -369,7 +532,33 @@ export default function EvalDashboard({ organizationId }) {
                 {cases.map((item, i) => (
                   <li key={item.id} className="rounded border border-[var(--border)] p-3">
                     <div className="flex items-start justify-between gap-3">
-                      <p className="text-xs text-[var(--muted-foreground)]">Question {i + 1}</p>
+                      <div className="min-w-0">
+                        <p className="text-xs text-[var(--muted-foreground)]">
+                          Question {i + 1}
+                          {item.metadata?.case_id && ` · ${item.metadata.case_id}`}
+                        </p>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {[
+                            ["Category", item.metadata?.category],
+                            ["Difficulty", item.metadata?.difficulty],
+                            ["Expected behavior", item.metadata?.expected_behavior],
+                            [
+                              "Answerable",
+                              typeof item.metadata?.answerable === "boolean"
+                                ? item.metadata.answerable ? "Yes" : "No"
+                                : null,
+                            ],
+                          ].filter(([, value]) => value != null && value !== "").map(([label, value]) => (
+                            <span
+                              key={label}
+                              className="rounded-md border border-[var(--border)] px-2 py-1 text-xs text-[var(--muted-foreground)]"
+                            >
+                              <span className="font-medium text-[var(--foreground)]">{label}:</span>{" "}
+                              {String(value)}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
                       <button
                         className={`${button} py-1 text-xs text-red-500`}
                         type="button"
@@ -380,9 +569,37 @@ export default function EvalDashboard({ organizationId }) {
                       </button>
                     </div>
                     <p className="mt-1 whitespace-pre-wrap text-sm">{item.question}</p>
-                    <p className="mt-1 text-xs text-[var(--muted-foreground)]">
-                      {item.relevant_document_ids?.length ? `${item.relevant_document_ids.length} relevance label(s)` : "No relevance labels"}
+                    <p className="mt-2 text-xs text-[var(--muted-foreground)]">
+                      {item.relevant_document_ids?.length
+                        ? `${item.relevant_document_ids.length} resolved relevance label(s)`
+                        : item.metadata?.relevant_document_ids?.length
+                          ? `Document references: ${item.metadata.relevant_document_ids.join(", ")} (not mapped to DocPilot document IDs)`
+                          : "No relevance labels"}
                     </p>
+
+                    {item.metadata && Object.keys(item.metadata).length > 0 && (
+                      <details className="mt-3 rounded border border-[var(--border)] p-3">
+                        <summary className="cursor-pointer text-xs font-semibold">
+                          Benchmark details ({Object.keys(item.metadata).length} fields)
+                        </summary>
+                        <dl className="mt-3 flex flex-col gap-3">
+                          {Object.entries(item.metadata).map(([key, value]) => (
+                            <div key={key} className="min-w-0">
+                              <dt className="text-xs font-semibold">
+                                {key.replace(/_/g, " ")}
+                              </dt>
+                              <dd className="mt-1 whitespace-pre-wrap break-words text-xs text-[var(--muted-foreground)]">
+                                {value === null
+                                  ? "null"
+                                  : typeof value === "object"
+                                    ? JSON.stringify(value, null, 2)
+                                    : String(value)}
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </details>
+                    )}
                   </li>
                 ))}
               </ol>

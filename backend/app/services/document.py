@@ -8,6 +8,7 @@ from typing import BinaryIO
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.document import Document
 from app.models.document_version import DocumentVersion
@@ -251,6 +252,7 @@ async def list_documents(
 
     result = await db.execute(
         select(Document)
+        .options(selectinload(Document.versions))
         .where(Document.organization_id == organization_id)
         .order_by(Document.created_at.desc())
     )

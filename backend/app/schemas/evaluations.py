@@ -111,6 +111,7 @@ class EvaluationCaseResponse(BaseModel):
 
 class EvaluationCasesImportRequest(BaseModel):
     content: str = Field(min_length=1, max_length=5_000_000)
+    document_id_mapping: dict[str, uuid.UUID] = Field(default_factory=dict)
 
 
 class EvaluationCasesImportResponse(BaseModel):

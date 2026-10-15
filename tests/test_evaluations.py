@@ -10,6 +10,7 @@ from app.services.evaluation_runner import (
     _answer_quality_metrics,
     get_evaluation_llm_client,
 )
+from app.models.document import Document
 from app.models.membership import Membership
 from app.models.evaluation_dataset import EvaluationDataset
 from app.models.evaluation_run import EvaluationRun
@@ -970,3 +971,102 @@ def test_answer_quality_metrics_skip_missing_or_empty_labels():
         "A generated answer.",
         {"essential_facts": [], "answerable": None},
     ) == {}
+
+
+async def test_jsonl_import_maps_benchmark_labels_to_document_ids(
+    client, db_session
+):
+    owner = await create_user(
+        db_session, "mapped-jsonl-owner@example.com", "Mapped JSONL Owner"
+    )
+    organization = await create_organization(
+        db_session, owner.id, "Mapped JSONL Org", "mapped-jsonl-org"
+    )
+    document = Document(
+        organization_id=organization.id,
+        created_by_user_id=owner.id,
+        name="Admissions Guide",
+    )
+    db_session.add(document)
+    await db_session.flush()
+
+    token = await login(client, owner.email)
+    created = await create_dataset(client, token, organization.id)
+    assert created.status_code == 201, created.text
+    dataset_id = created.json()["id"]
+
+    record = {
+        "case_id": "MAP-01",
+        "question": "What is the admissions deadline?",
+        "relevant_document_ids": ["DOC-003"],
+        "context_document_ids": ["DOC-003"],
+    }
+    response = await client.post(
+        f"/organizations/{organization.id}/evaluation-datasets/"
+        f"{dataset_id}/cases/import",
+        json={
+            "content": json.dumps(record),
+            "document_id_mapping": {"DOC-003": str(document.id)},
+        },
+        headers=auth(token),
+    )
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["imported_count"] == 1
+    case = payload["cases"][0]
+    assert case["relevant_document_ids"] == [str(document.id)]
+    assert case["metadata"]["relevant_document_ids"] == ["DOC-003"]
+    assert case["metadata"]["context_document_ids"] == ["DOC-003"]
+
+
+async def test_jsonl_import_rejects_mapping_to_another_organization(
+    client, db_session
+):
+    owner = await create_user(
+        db_session, "cross-org-jsonl-owner@example.com", "Cross Org Owner"
+    )
+    organization = await create_organization(
+        db_session, owner.id, "Import Org", "cross-org-import-org"
+    )
+    other_organization = await create_organization(
+        db_session, owner.id, "Other Org", "cross-org-other-org"
+    )
+    other_document = Document(
+        organization_id=other_organization.id,
+        created_by_user_id=owner.id,
+        name="Private Other Organization Guide",
+    )
+    db_session.add(other_document)
+    await db_session.flush()
+
+    token = await login(client, owner.email)
+    created = await create_dataset(client, token, organization.id)
+    assert created.status_code == 201, created.text
+    dataset_id = created.json()["id"]
+
+    record = {
+        "case_id": "CROSS-ORG-01",
+        "question": "What does the guide say?",
+        "relevant_document_ids": ["DOC-003"],
+    }
+    response = await client.post(
+        f"/organizations/{organization.id}/evaluation-datasets/"
+        f"{dataset_id}/cases/import",
+        json={
+            "content": json.dumps(record),
+            "document_id_mapping": {"DOC-003": str(other_document.id)},
+        },
+        headers=auth(token),
+    )
+
+    assert response.status_code == 422, response.text
+    assert "belonging to this organization" in response.text
+
+    listed = await client.get(
+        f"/organizations/{organization.id}/evaluation-datasets/"
+        f"{dataset_id}/cases",
+        headers=auth(token),
+    )
+    assert listed.status_code == 200, listed.text
+    assert listed.json() == []
