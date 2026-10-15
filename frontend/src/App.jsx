@@ -212,14 +212,64 @@ function OrganizationPage({ organizations, onSelect, onCreate, onLogout }) {
 
         <div className="border-t border-[var(--border)] pt-5">
           {organizations.length === 0 ? (
-            <div className="mb-4">
-              <h2 className="text-base font-semibold text-[var(--foreground)] mb-1">
-                Create your first organization
-              </h2>
-              <p className="text-sm text-[var(--muted-foreground)]">
-                Your organization is the private workspace for your documents and conversations.
-              </p>
-            </div>
+            <>
+              <div className="mb-4">
+                <h2 className="text-base font-semibold text-[var(--foreground)] mb-1">
+                  Create your first organization
+                </h2>
+                <p className="text-sm text-[var(--muted-foreground)]">
+                  Your organization is the private workspace for your documents and conversations.
+                </p>
+              </div>
+
+              <form onSubmit={createOrganization} className="flex flex-col gap-3">
+                <div>
+                  <label htmlFor="org-name" className="block text-xs mb-1.5 text-[var(--muted-foreground)]">
+                    Organization name
+                  </label>
+                  <input
+                    id="org-name"
+                    required
+                    maxLength={200}
+                    value={name}
+                    onChange={(event) => updateName(event.target.value)}
+                    className="w-full rounded border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)]"
+                    placeholder="e.g. My Organization"
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="org-slug" className="block text-xs mb-1.5 text-[var(--muted-foreground)]">
+                    Organization slug
+                  </label>
+                  <input
+                    id="org-slug"
+                    required
+                    pattern="[a-z0-9]+(-[a-z0-9]+)*"
+                    maxLength={100}
+                    value={slug}
+                    onChange={(event) => setSlug(event.target.value)}
+                    className="w-full rounded border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)]"
+                    placeholder="e.g. my-organization"
+                  />
+                  <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                    Lowercase letters, numbers, and hyphens only.
+                  </p>
+                </div>
+
+                {error && (
+                  <p role="alert" className="text-sm text-red-400">{error}</p>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={busy || !name.trim() || !slug.trim()}
+                  className="w-full rounded bg-[var(--primary)] px-3 py-2.5 text-sm font-medium text-[var(--primary-foreground)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {busy ? "Creating organization…" : "Create organization"}
+                </button>
+              </form>
+            </>
           ) : (
             <details className="group">
               <summary className="flex cursor-pointer list-none items-center gap-3 rounded-lg p-3 hover:bg-[var(--muted)] transition-colors">
