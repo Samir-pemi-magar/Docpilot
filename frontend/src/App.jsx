@@ -136,6 +136,151 @@ function LoginPage({ onLogin, onRegister }) {
   );
 }
 
+function DeleteAccountControl({ onDeleted }) {
+  const [open, setOpen] = useState(false);
+  const [password, setPassword] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  function closeDialog() {
+    if (busy) return;
+    setOpen(false);
+    setPassword("");
+    setConfirmed(false);
+    setError("");
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    if (busy || !password || !confirmed) return;
+
+    setBusy(true);
+    setError("");
+
+    try {
+      await api.deleteAccount(password);
+      onDeleted();
+    } catch (err) {
+      setError(err.message || "Account deletion failed. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          setError("");
+          setOpen(true);
+        }}
+        className="text-xs text-red-400 transition hover:text-red-300"
+      >
+        Delete account
+      </button>
+
+      {open && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !busy) closeDialog();
+          }}
+        >
+          <section
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-account-title"
+            aria-describedby="delete-account-description"
+            className="w-full max-w-md rounded-xl border border-[var(--border)] bg-[var(--card)] p-6 shadow-2xl"
+          >
+            <h2
+              id="delete-account-title"
+              className="text-base font-semibold text-[var(--foreground)]"
+            >
+              Delete your account?
+            </h2>
+
+            <p
+              id="delete-account-description"
+              className="mt-3 text-sm leading-6 text-[var(--muted-foreground)]"
+            >
+              This permanently deletes your account and cannot be undone.
+              Shared organization documents and evaluation history are
+              preserved, but your personal conversations will be deleted.
+              You must transfer or delete any organizations you own first.
+            </p>
+
+            <form onSubmit={submit} className="mt-5 space-y-4">
+              <div>
+                <label
+                  htmlFor="delete-account-password"
+                  className="mb-1.5 block text-xs text-[var(--muted-foreground)]"
+                >
+                  Enter your password to continue
+                </label>
+                <input
+                  id="delete-account-password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  maxLength={128}
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  disabled={busy}
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)] disabled:opacity-50"
+                />
+              </div>
+
+              <label className="flex items-start gap-2 text-sm text-[var(--foreground)]">
+                <input
+                  type="checkbox"
+                  checked={confirmed}
+                  onChange={(event) => setConfirmed(event.target.checked)}
+                  disabled={busy}
+                  className="mt-1 accent-red-500"
+                />
+                <span>
+                  I understand that deleting my account is permanent and
+                  cannot be undone.
+                </span>
+              </label>
+
+              {error && (
+                <p
+                  role="alert"
+                  className="rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2 text-sm text-red-400"
+                >
+                  {error}
+                </p>
+              )}
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={closeDialog}
+                  disabled={busy}
+                  className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--foreground)] transition hover:bg-[var(--background)] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={busy || !password || !confirmed}
+                  className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {busy ? "Deleting…" : "Permanently delete"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+    </>
+  );
+}
+
 function OrganizationPage({ organizations, onSelect, onCreate, onLogout }) {
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
@@ -336,13 +481,16 @@ function OrganizationPage({ organizations, onSelect, onCreate, onLogout }) {
           <p role="alert" className="text-xs text-red-400 mb-3">{error}</p>
         )}
 
-        <button
-          type="button"
-          onClick={onLogout}
-          className="mt-5 text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-        >
-          Sign out
-        </button>
+        <div className="mt-5 flex flex-wrap items-center gap-4">
+          <DeleteAccountControl onDeleted={onLogout} />
+          <button
+            type="button"
+            onClick={onLogout}
+            className="text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+          >
+            Sign out
+          </button>
+        </div>
       </section>
     </main>
   );
@@ -606,6 +754,7 @@ export default function App() {
           <span className="text-xs text-[var(--muted-foreground)] truncate">
             {user.full_name || user.email}
           </span>
+          <DeleteAccountControl onDeleted={logout} />
           <button
             type="button"
             onClick={logout}

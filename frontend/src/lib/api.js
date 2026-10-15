@@ -15,19 +15,20 @@ export function clearAccessToken() {
 }
 
 async function request(path, options = {}) {
+  const { preserveTokenOnUnauthorized = false, ...fetchOptions } = options;
   const token = getAccessToken();
-  const headers = new Headers(options.headers || {});
+  const headers = new Headers(fetchOptions.headers || {});
 
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
   }
 
-  if (options.body && !(options.body instanceof FormData)) {
+  if (fetchOptions.body && !(fetchOptions.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
+    ...fetchOptions,
     headers,
   });
 
@@ -41,7 +42,7 @@ async function request(path, options = {}) {
     : await response.text();
 
   if (!response.ok) {
-    if (response.status === 401) {
+    if (response.status === 401 && !preserveTokenOnUnauthorized) {
       clearAccessToken();
     }
 
@@ -88,6 +89,13 @@ export const api = {
 
   me() {
     return request("/auth/me");
+  },
+
+  deleteAccount(password) {
+    return request("/auth/me", {
+      ...jsonRequest("DELETE", { password }),
+      preserveTokenOnUnauthorized: true,
+    });
   },
 
   organizations() {
