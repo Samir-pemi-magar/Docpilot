@@ -5,6 +5,10 @@ import uuid
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
+class DeleteAccountRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=128)
+
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str

@@ -3,16 +3,25 @@ from __future__ import annotations
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
 from app.auth.dependencies import get_current_user
-from app.auth.schemas import LoginRequest, RegisterRequest, TokenResponse, UserResponse
+from app.auth.schemas import (
+    DeleteAccountRequest,
+    LoginRequest,
+    RegisterRequest,
+    TokenResponse,
+    UserResponse,
+)
 from app.auth.security import create_access_token, hash_password, verify_password
 from app.core.config import get_settings
 from app.db.session import get_db_session
 from app.models.user import User
+from app.models.membership import Membership
+from app.models.document import Document
+from app.models.document_version import DocumentVersion
 
 router = APIRouter(
     prefix="/auth",
@@ -108,3 +117,49 @@ async def get_me(
 ) -> UserResponse:
     """Return the currently authenticated user."""
     return current_user
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_my_account(
+    data: DeleteAccountRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+) -> None:
+    """Delete the current account while preserving shared organization data."""
+    if not verify_password(data.password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect password.",
+        )
+
+    owned_org_result = await db.execute(
+        select(Membership.organization_id)
+        .where(
+            Membership.user_id == current_user.id,
+            Membership.role == "owner",
+        )
+        .limit(1)
+    )
+    if owned_org_result.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Delete organizations you own before deleting your account.",
+        )
+
+    try:
+        # Preserve documents in organizations shared with other members.
+        await db.execute(
+            update(Document)
+            .where(Document.created_by_user_id == current_user.id)
+            .values(created_by_user_id=None)
+        )
+        await db.execute(
+            update(DocumentVersion)
+            .where(DocumentVersion.uploaded_by_user_id == current_user.id)
+            .values(uploaded_by_user_id=None)
+        )
+        await db.delete(current_user)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
