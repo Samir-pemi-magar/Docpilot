@@ -110,6 +110,13 @@ export const api = {
     return request(`/organizations/${encodeURIComponent(organizationId)}`);
   },
 
+  deleteOrganization(organizationId) {
+    return request(
+      `/organizations/${encodeURIComponent(organizationId)}`,
+      { method: "DELETE" },
+    );
+  },
+
   conversations(organizationId, { limit = 20, offset = 0 } = {}) {
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     return request(

@@ -281,11 +281,33 @@ function DeleteAccountControl({ onDeleted }) {
   );
 }
 
-function OrganizationPage({ organizations, onSelect, onCreate, onLogout }) {
+function OrganizationPage({ organizations, onSelect, onCreate, onDeleteOrganization, onLogout }) {
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [deletingOrganizationId, setDeletingOrganizationId] = useState(null);
+
+  async function handleDeleteOrganization(organization) {
+    const confirmed = window.confirm(
+      `Permanently delete "${organization.name}"?\n\n` +
+      "This deletes the organization and its associated documents, " +
+      "conversations, and evaluation data. This action cannot be undone."
+    );
+
+    if (!confirmed) return;
+
+    setError("");
+    setDeletingOrganizationId(organization.id);
+
+    try {
+      await onDeleteOrganization(organization.id);
+    } catch (err) {
+      setError(err.message || "Could not delete the organization.");
+    } finally {
+      setDeletingOrganizationId(null);
+    }
+  }
 
   function updateName(value) {
     setName(value);
@@ -330,27 +352,44 @@ function OrganizationPage({ organizations, onSelect, onCreate, onLogout }) {
         {organizations.length > 0 && (
           <div className="flex flex-col gap-3 mb-6">
             {organizations.map((organization) => (
-              <button
+              <div
                 key={organization.id}
-                type="button"
-                onClick={() => onSelect(organization)}
-                className="group w-full flex items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--background)] p-4 text-left hover:border-[var(--primary)] hover:bg-[var(--muted)] transition-colors"
+                className="rounded-lg border border-[var(--border)] bg-[var(--background)] p-3"
               >
-                <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--card)] text-lg" aria-hidden="true">
-                  🏢
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-semibold text-[var(--foreground)]">
-                    {organization.name}
+                <button
+                  type="button"
+                  onClick={() => onSelect(organization)}
+                  className="group w-full flex items-center gap-3 rounded-lg p-2 text-left hover:bg-[var(--muted)] transition-colors"
+                >
+                  <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--card)] text-lg" aria-hidden="true">
+                    🏢
                   </span>
-                  <span className="block text-xs text-[var(--muted-foreground)] mt-1 truncate">
-                    {organization.slug}
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold text-[var(--foreground)]">
+                      {organization.name}
+                    </span>
+                    <span className="block text-xs text-[var(--muted-foreground)] mt-1 truncate">
+                      {organization.slug}
+                    </span>
                   </span>
-                </span>
-                <span className="text-lg text-[var(--muted-foreground)] group-hover:text-[var(--foreground)]" aria-hidden="true">
-                  →
-                </span>
-              </button>
+                  <span className="text-lg text-[var(--muted-foreground)] group-hover:text-[var(--foreground)]" aria-hidden="true">
+                    →
+                  </span>
+                </button>
+
+                <div className="mt-2 flex justify-end border-t border-[var(--border)] pt-2">
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteOrganization(organization)}
+                    disabled={deletingOrganizationId !== null}
+                    className="rounded-lg border border-red-500/30 px-3 py-2 text-xs font-medium text-red-400 transition hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {deletingOrganizationId === organization.id
+                      ? "Deleting…"
+                      : "Delete organization"}
+                  </button>
+                </div>
+              </div>
             ))}
           </div>
         )}
@@ -678,6 +717,18 @@ export default function App() {
     setOrganization(created);
   }
 
+  async function deleteOrganization(organizationId) {
+    await api.deleteOrganization(organizationId);
+
+    setOrganizations((current) =>
+      current.filter((item) => item.id !== organizationId)
+    );
+
+    if (organization?.id === organizationId) {
+      setOrganization(null);
+    }
+  }
+
   function logout() {
     clearAccessToken();
     setToken(null);
@@ -714,6 +765,7 @@ export default function App() {
         organizations={organizations}
         onSelect={setOrganization}
         onCreate={createOrganization}
+        onDeleteOrganization={deleteOrganization}
         onLogout={logout}
       />
     );
