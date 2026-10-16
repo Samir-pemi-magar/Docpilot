@@ -1,0 +1,106 @@
+%% DocPilot - Backend components (backend/app), arrows = real import/call dependencies
+flowchart LR
+    main["main.py<br/>creates app, includes routers"]
+    lifespan["core/lifespan.py<br/>sets app.state.storage<br/>(get_storage does not read it)"]
+    config["core/config.py<br/>Settings"]
+
+    subgraph routes["api/routes + auth/routes"]
+        r_auth["auth/routes<br/>register, login, me, delete me"]
+        r_org["organizations"]
+        r_doc["documents"]
+        r_search["search"]
+        r_chat["chat<br/>routing, rewrite, context,<br/>guard, persistence inline"]
+        r_conv["conversations<br/>queries models directly"]
+        r_eval["evaluations"]
+        r_misc["health, version"]
+    end
+
+    subgraph deps["Dependencies"]
+        d_api["api/dependencies<br/>get_storage,<br/>get_document_ingestion_task"]
+        d_auth["auth/dependencies<br/>get_current_user"]
+        d_authz["auth/authorization<br/>get_organization_access,<br/>require_organization_roles"]
+        d_emb["embeddings/dependencies<br/>get_embedding_provider"]
+        d_db["db/session<br/>get_db_session"]
+    end
+
+    subgraph services["services"]
+        s_doc["document"]
+        s_org["organization"]
+        s_mem["membership"]
+        s_ret["retrieval"]
+        s_llm["llm"]
+        s_ing["ingestion"]
+        s_task["ingestion_task"]
+        s_chunk["chunk"]
+        s_embed["embedding"]
+        s_eval["evaluations<br/>CRUD, import"]
+        s_run["evaluation_runner"]
+    end
+
+    subgraph processing["processing"]
+        p_fac["factory"]
+        p_pipe["pipeline"]
+        parsers["parsers<br/>pdf, docx, xlsx, txt, md"]
+        norm["normalization"]
+        chunking["chunking<br/>prose, structured, hybrid"]
+    end
+
+    emb["embeddings<br/>LocalBGEEmbeddingProvider"]
+    storage["storage<br/>LocalStorage"]
+    models["models (SQLAlchemy)<br/>13 tables"]
+    schemas["schemas (Pydantic)"]
+
+    main --> routes
+    main --> lifespan
+    lifespan --> storage
+    lifespan --> config
+
+    r_auth --> d_auth
+    r_org --> d_authz
+    r_doc --> d_authz
+    r_search --> d_authz
+    r_chat --> d_authz
+    r_conv --> d_authz
+    r_eval --> d_authz
+    d_authz --> d_auth
+    d_auth --> d_db
+    d_authz --> d_db
+
+    r_org --> s_org
+    r_org --> s_mem
+    r_doc --> s_doc
+    r_doc --> d_api
+    r_search --> s_ret
+    r_search --> d_emb
+    r_chat --> s_ret
+    r_chat --> s_llm
+    r_chat --> d_emb
+    r_chat --> models
+    r_conv --> models
+    r_eval --> s_eval
+    r_eval --> s_run
+    r_eval --> d_emb
+    s_run --> s_ret
+    s_run --> s_llm
+
+    d_api --> storage
+    d_api -.->|"lazy import"| s_task
+    s_task --> s_ing
+    s_task --> p_fac
+    s_task --> d_emb
+    s_ing --> p_fac
+    s_ing --> s_chunk
+    s_ing --> s_embed
+    s_ing --> s_doc
+    s_doc --> storage
+    d_emb --> emb
+
+    p_fac --> p_pipe
+    p_pipe --> parsers
+    p_pipe --> norm
+    p_pipe --> chunking
+
+    services --> models
+    routes -.-> schemas
+    s_llm --> config
+    d_db --> config

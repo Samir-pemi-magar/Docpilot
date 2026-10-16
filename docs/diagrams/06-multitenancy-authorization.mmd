@@ -1,0 +1,39 @@
+%% DocPilot - Multi-tenancy and authorization
+%% Isolation is enforced in application code (path org id + membership + org-scoped queries).
+%% No PostgreSQL row-level security was found in models or migrations.
+flowchart TD
+    req["Request to /organizations/{organization_id}/..."]
+    tok["OAuth2PasswordBearer<br/>Authorization: Bearer JWT"]
+    dec["decode_access_token<br/>HS256, sub = user UUID, exp 30 min default"]
+    usr{"User exists and<br/>is_active = true?"}
+    e401["401 Could not validate credentials"]
+    mem{"memberships row for<br/>organization_id + user_id?"}
+    e403a["403 No access to this organization"]
+    acc["OrganizationAccess<br/>user + membership(role)"]
+    role{"endpoint requires<br/>specific roles?"}
+    e403b["403 No permission for this action"]
+    svc["Service / route query<br/>always filtered by organization_id<br/>documents: Document.organization_id<br/>chunks: join versions and documents<br/>datasets: EvaluationDataset.organization_id"]
+    own["Personal scope (extra filter):<br/>conversations and messages also require<br/>created_by_user_id = current user.<br/>Mismatch returns 404"]
+
+    req --> tok --> dec --> usr
+    usr -->|"no"| e401
+    usr -->|"yes"| mem
+    mem -->|"no"| e403a
+    mem -->|"yes"| acc --> role
+    role -->|"yes, role not allowed"| e403b
+    role -->|"no, or role allowed"| svc
+    svc --> own
+
+    subgraph roles["Role capabilities, verified in routes and tests"]
+        direction TB
+        m["member<br/>read org, list members,<br/>list/get/download documents,<br/>search, chat, own conversations,<br/>ALL evaluation endpoints"]
+        a["admin = member +<br/>upload document / new version,<br/>delete document, update org,<br/>add members (admin or member only),<br/>change/remove members with role member"]
+        o["owner = admin +<br/>manage any non-owner membership,<br/>delete organization<br/>(single owner: owner role cannot be<br/>assigned or transferred by any endpoint)"]
+        m --> a --> o
+    end
+    acc ~~~ roles
+
+    subgraph acct["Account rules"]
+        del["DELETE /auth/me requires password<br/>409 if user owns any organization<br/>documents.created_by / versions.uploaded_by set NULL<br/>user row deleted: memberships and conversations cascade"]
+    end
+    roles ~~~ acct

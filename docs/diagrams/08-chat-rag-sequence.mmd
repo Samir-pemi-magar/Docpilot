@@ -1,0 +1,58 @@
+%% DocPilot - Chat / RAG sequence: POST /organizations/{org}/chat
+%% Single request/response (no streaming on the backend).
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant FE as React SPA
+    participant API as Chat route
+    participant AZ as Auth dependencies
+    participant DB as PostgreSQL
+    participant EM as BGE-M3 (in process)
+    participant LLM as llama.cpp server
+
+    U->>FE: type question
+    FE->>API: POST /api/organizations/ORG/chat {query, top_k, conversation_id?}
+    API->>AZ: get_current_user, get_organization_access
+    AZ->>DB: load active user, load membership
+    AZ-->>API: OrganizationAccess (401 or 403 on failure)
+
+    opt conversation_id supplied
+        API->>DB: SELECT conversation WHERE id, organization_id, created_by_user_id
+        DB-->>API: row or none (none gives 404)
+        API->>DB: last 10 messages, bounded to 1,200 chars
+    end
+
+    Note over API: Rule-based routing (regex heuristics)
+    alt name introduction or name recall
+        API->>API: canned answer, no retrieval, no LLM
+    else source-reference question ("which document...")
+        API->>DB: sources of previous assistant message
+        API->>API: answer from saved source names, no LLM
+    else small talk
+        API->>LLM: greeting prompt (no documents)
+    else general-knowledge question
+        API->>LLM: general-knowledge prompt (no documents)
+    else document question
+        opt follow-up pattern needs history
+            API->>LLM: rewrite as standalone question (history sent here only)
+            LLM-->>API: standalone question (503 if LLM fails)
+        end
+        API->>EM: embed_query (threadpool)
+        EM-->>API: 1024-d vector
+        API->>DB: vector query + keyword query (organization scoped)
+        DB-->>API: candidates
+        API->>API: RRF fusion, heuristic boosts, top_k
+        alt no chunks retrieved
+            API->>API: fixed "couldn't find relevant information" answer, no LLM
+        else chunks found
+            API->>API: build context (max 12,000 chars) + system prompt
+            API->>LLM: question + excerpts (no chat history)
+            LLM-->>API: answer (503 if LLM fails)
+            API->>API: year-specific admissions deadline guard
+        end
+    end
+
+    API->>DB: create conversation if new (title = first 200 chars of query)
+    API->>DB: INSERT user message + assistant message (with sources JSON), COMMIT
+    API-->>FE: ChatResponse {conversation_id, answer, sources, trace[]}
+    FE-->>U: render answer, sources panel, trace panel

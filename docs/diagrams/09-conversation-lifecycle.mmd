@@ -1,0 +1,43 @@
+%% DocPilot - Conversation lifecycle and ownership rules
+%% Conversations are created only as a side effect of POST /chat. There is no
+%% create, rename or update endpoint. All access requires membership AND ownership.
+flowchart TD
+    start(["POST /organizations/ORG/chat"])
+    has{"conversation_id<br/>in request?"}
+    owncheck{"conversation exists with<br/>id + organization_id +<br/>created_by_user_id = caller?"}
+    nf["404 Conversation not found<br/>(same response for missing,<br/>other user's, other org's)"]
+    gen["generate answer<br/>(see chat sequence diagram)<br/>failure returns 503 and persists nothing"]
+    newc["create conversation<br/>title = query[:200]<br/>created_by = caller"]
+    upd["touch conversation.updated_at"]
+    msgs["INSERT 2 messages in one commit:<br/>user message (no sources)<br/>assistant message (sources = JSON snapshot<br/>of chunk_id, version, chunk_index, text,<br/>distance, document_id, document_name)"]
+    resp["ChatResponse with conversation_id"]
+
+    start --> has
+    has -->|"no"| gen
+    has -->|"yes"| owncheck
+    owncheck -->|"no"| nf
+    owncheck -->|"yes"| gen
+    gen -->|"new"| newc --> msgs
+    gen -->|"existing"| upd --> msgs
+    msgs --> resp
+
+    subgraph follow["Follow-up handling"]
+        direction TB
+        f1["history: last 10 messages, newest first,<br/>trimmed to 1,200 characters total"]
+        f2["history used ONLY for the standalone-question rewrite<br/>(when query matches follow-up patterns)<br/>never sent to the answer call"]
+        f3["'which document / where did you get that' reuses sources<br/>of the immediately preceding assistant message,<br/>answered without LLM call"]
+        f1 --> f2
+        f1 --> f3
+    end
+    owncheck -.-> follow
+
+    subgraph read["Read and delete (owner only, org scoped)"]
+        direction TB
+        lst["GET /conversations<br/>limit 1..100, offset, newest updated first<br/>includes message_count"]
+        get["GET /conversations/ID<br/>messages ordered created_at asc,<br/>role desc, id asc (user before assistant)"]
+        del["DELETE /conversations/ID<br/>204, messages cascade"]
+    end
+    resp ~~~ read
+
+    life["Other lifecycle triggers:<br/>delete organization or delete account<br/>cascade-deletes conversations and messages"]
+    read ~~~ life

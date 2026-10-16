@@ -1,0 +1,56 @@
+%% DocPilot - Evaluation architecture and metrics
+%% Runs execute synchronously inside POST .../evaluation-datasets/{id}/runs.
+flowchart TD
+    subgraph author["Dataset authoring (any org member)"]
+        ds["evaluation_datasets<br/>org scoped"]
+        imp["JSONL import<br/>max 2,000 lines, all-or-nothing<br/>question required<br/>reference_answer or expected_answer<br/>relevant_document_ids: UUIDs or labels<br/>mapped via document_id_mapping<br/>case_id unique per dataset<br/>full record kept in case metadata"]
+        man["manual case create / update / delete<br/>delete all cases"]
+        cases["evaluation_cases<br/>question, reference_answer,<br/>relevant_document_ids, metadata"]
+        val["relevant document UUIDs must<br/>belong to the same organization (422)"]
+        ds --> cases
+        imp --> val --> cases
+        man --> cases
+    end
+
+    start["POST /evaluation-datasets/ID/runs {top_k 1..100}"]
+    run["INSERT evaluation_runs status = running, commit"]
+
+    subgraph per["For each case in position order (sequential)"]
+        direction TB
+        e1["embed_query (BGE-M3)"]
+        e2["retrieve_hybrid_chunks (same retrieval as chat)"]
+        e3{"any sources?"}
+        e4["answer = fixed no-sources text<br/>(LLM skipped)"]
+        e5["evaluation prompt: question +<br/>excerpts truncated to 3,000 chars<br/>-> LLM generate"]
+        m1["retrieval metrics (document level)<br/>only if relevant_document_ids set"]
+        m2["answer metrics (lexical)<br/>only if labels in case metadata"]
+        r1["INSERT evaluation_results, commit per case<br/>snapshots of question, reference answer,<br/>metadata, sources, answer, metrics, duration_ms"]
+        x1["any exception: status = failed,<br/>generic error message, no metrics"]
+        e1 --> e2 --> e3
+        e3 -->|"no"| e4 --> m1
+        e3 -->|"yes"| e5 --> m1
+        m1 --> m2 --> r1
+        e1 -.-> x1
+        e5 -.-> x1
+        x1 --> r1
+    end
+
+    agg["Aggregate: arithmetic mean over completed cases that have the label<br/>stored in evaluation_runs.metrics with top_k and evaluated-case counts<br/>run.status = completed (or failed on unexpected run-level error)"]
+    ui["GET runs, run, results (filter failures, limit/offset)<br/>consumed by Eval dashboard"]
+
+    cases --> start --> run --> per --> agg --> ui
+
+    subgraph metrics["Implemented metrics"]
+        direction TB
+        t1["hit_rate_at_k: 1 if any relevant document in ranked unique documents"]
+        t2["recall_at_k: relevant documents found / relevant documents labeled"]
+        t3["reciprocal_rank: 1 / rank of first relevant document"]
+        t4["essential_fact_coverage: share of metadata essential_facts<br/>found as normalized substrings in the answer"]
+        t5["answerability_compliance: metadata answerable flag vs.<br/>detection of fixed abstention phrases in the answer"]
+    end
+    agg ~~~ metrics
+
+    notimpl["NOT IMPLEMENTED: LLM-as-judge, semantic answer similarity,<br/>faithfulness/groundedness, precision@k, nDCG, background execution.<br/>reference_answer is stored and snapshotted but not used by any metric.<br/>Evaluation uses its own prompt and context size, not the chat router logic."]
+    metrics ~~~ notimpl
+    classDef note fill:#fff,stroke:#999,stroke-dasharray: 4 4,color:#555
+    class notimpl note

@@ -1,0 +1,39 @@
+%% DocPilot - High-level logical architecture
+flowchart TB
+    subgraph client["Client"]
+        spa["React SPA<br/>pages: Chat, Files, Eval dashboard<br/>token in localStorage"]
+    end
+
+    subgraph backend["FastAPI process (uvicorn)"]
+        direction TB
+        routes["API routers<br/>auth, organizations, documents,<br/>search, chat, conversations,<br/>evaluation-datasets, health, version"]
+        authz["Auth and authorization<br/>JWT, org membership, roles"]
+        svc["Services<br/>document, organization, membership,<br/>retrieval, ingestion, evaluations, llm"]
+        proc["Document processing<br/>parsers, normalizers, hybrid chunker"]
+        emb["Embedding provider<br/>BGE-M3 local, 1024-d dense"]
+        bg["FastAPI BackgroundTasks<br/>ingestion runs after response"]
+        stor["StorageService abstraction<br/>LocalStorage implementation"]
+        llmc["OpenAICompatibleLLMClient<br/>httpx"]
+    end
+
+    subgraph data["Data stores"]
+        pg[("PostgreSQL + pgvector")]
+        files[("Local filesystem")]
+    end
+
+    llmsrv["llama.cpp server<br/>Qwen3-1.7B"]
+
+    spa -->|"REST JSON / multipart"| routes
+    routes --> authz
+    routes --> svc
+    routes --> llmc
+    routes --> emb
+    routes -->|"upload accepted"| bg
+    bg --> svc
+    svc --> proc
+    svc --> emb
+    svc --> stor
+    svc -->|"SQLAlchemy async"| pg
+    stor --> files
+    llmc -->|"HTTP"| llmsrv
+    authz -->|"user + membership lookup"| pg

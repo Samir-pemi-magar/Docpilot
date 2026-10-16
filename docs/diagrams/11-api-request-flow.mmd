@@ -1,0 +1,78 @@
+%% DocPilot - API boundaries and request flow (FastAPI dependency injection)
+flowchart LR
+    client["Browser SPA<br/>fetch with Bearer token<br/>base /api"]
+    proxy["Vite dev proxy<br/>/api -> backend, strips prefix<br/>no CORS middleware in backend"]
+
+    subgraph public["Public (no token)"]
+        p1["GET /health"]
+        p2["GET /version"]
+        p3["POST /auth/register"]
+        p4["POST /auth/login"]
+    end
+
+    subgraph user["Authenticated user (get_current_user)"]
+        u1["GET, DELETE /auth/me"]
+        u2["POST, GET /organizations"]
+    end
+
+    subgraph orgm["Org member (get_organization_access)"]
+        m1["GET /organizations/ID, GET .../members"]
+        m2["GET documents, versions, download"]
+        m3["POST .../search"]
+        m4["POST .../chat"]
+        m5["GET, DELETE .../conversations (own only)"]
+        m6["all /evaluation-datasets endpoints<br/>datasets, cases, import, runs, results"]
+    end
+
+    subgraph adm["Owner or admin (require_organization_roles)"]
+        a1["POST documents, POST documents/ID/versions<br/>DELETE documents/ID"]
+        a2["PATCH organization"]
+        a3["POST, PATCH, DELETE .../members"]
+    end
+
+    subgraph own["Owner only"]
+        o1["DELETE /organizations/ID"]
+    end
+
+    subgraph di["Dependency chain"]
+        direction TB
+        dbs["get_db_session<br/>AsyncSession per request"]
+        cu["get_current_user<br/>JWT decode, active user"]
+        oa["get_organization_access<br/>membership lookup"]
+        rr["require_organization_roles"]
+        gs["get_storage<br/>module-level LocalStorage"]
+        ge["get_embedding_provider<br/>app.state or cached BGE-M3"]
+        gl["get_llm_client / get_evaluation_llm_client<br/>OpenAICompatibleLLMClient"]
+        gi["get_document_ingestion_task"]
+        dbs --> cu --> oa --> rr
+    end
+
+    subgraph svc["Services and persistence"]
+        sv["service functions or inline route queries"]
+        pg[("PostgreSQL")]
+        fs[("Local files")]
+        llm["LLM server"]
+        bg["BackgroundTasks<br/>ingestion"]
+    end
+
+    client --> proxy
+    proxy --> public
+    proxy --> user
+    proxy --> orgm
+    proxy --> adm
+    proxy --> own
+    user --> cu
+    orgm --> oa
+    adm --> rr
+    own --> rr
+    orgm --> ge
+    orgm --> gl
+    adm --> gs
+    adm --> gi
+    m2 --> gs
+    di --> sv
+    sv --> pg
+    sv --> fs
+    sv --> llm
+    gi --> bg
+    bg --> pg

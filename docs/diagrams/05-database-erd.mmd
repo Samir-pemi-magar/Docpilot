@@ -1,0 +1,152 @@
+%% DocPilot - Database ER diagram
+%% Verified against backend/app/models/*.py and alembic/versions (head: c4f91a2d7e60)
+%% Cardinality note: ORM relationships and FK ondelete shown in relationship labels.
+erDiagram
+    users {
+        uuid id PK
+        string email UK "String(320)"
+        string password_hash "argon2"
+        string full_name
+        boolean is_active
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    organizations {
+        uuid id PK
+        string name
+        string slug UK
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    memberships {
+        uuid id PK
+        uuid organization_id FK "UK with user_id"
+        uuid user_id FK "UK with organization_id"
+        string role "CHECK owner, admin, member"
+        timestamptz created_at
+    }
+    documents {
+        uuid id PK
+        uuid organization_id FK "indexed"
+        uuid created_by_user_id FK "nullable"
+        string name
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    document_versions {
+        uuid id PK
+        uuid document_id FK "UK with version_number"
+        uuid uploaded_by_user_id FK "nullable"
+        int version_number "CHECK greater than 0"
+        string original_filename
+        string content_type
+        bigint size_bytes
+        string storage_object_key UK
+        string sha256
+        string ingestion_status "pending, processing, completed, failed"
+        timestamptz created_at
+    }
+    chunks {
+        uuid id PK
+        uuid document_version_id FK "UK with chunk_index"
+        int chunk_index
+        text text "GIN index to_tsvector simple"
+        string element_type
+        jsonb source_element_indexes
+        jsonb metadata
+        int character_count
+        int token_count
+        timestamptz created_at
+    }
+    chunk_embeddings {
+        uuid id PK
+        uuid chunk_id FK "UK with model"
+        string model "UK with chunk_id"
+        int dimension "CHECK = 1024"
+        vector1024 embedding "no ANN index"
+        timestamptz created_at
+    }
+    conversations {
+        uuid id PK
+        uuid organization_id FK
+        uuid created_by_user_id FK
+        string title "max 200"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    messages {
+        uuid id PK
+        uuid conversation_id FK
+        string role "CHECK user, assistant"
+        text content
+        jsonb sources "nullable source snapshot"
+        timestamptz created_at
+    }
+    evaluation_datasets {
+        uuid id PK
+        uuid organization_id FK
+        uuid created_by_user_id FK "nullable"
+        string name
+        text description
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    evaluation_cases {
+        uuid id PK
+        uuid dataset_id FK "UK with position"
+        int position
+        text question
+        text reference_answer
+        jsonb relevant_document_ids "UUID strings, not an FK"
+        jsonb metadata
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    evaluation_runs {
+        uuid id PK
+        uuid dataset_id FK
+        uuid started_by_user_id FK "nullable"
+        string status "pending, running, completed, failed"
+        int total_cases
+        int completed_cases
+        int failed_cases
+        jsonb metrics "aggregates"
+        text error_message
+        timestamptz started_at
+        timestamptz completed_at
+        timestamptz created_at
+    }
+    evaluation_results {
+        uuid id PK
+        uuid run_id FK "UK with case_id"
+        uuid case_id FK "nullable"
+        text question_snapshot
+        text reference_answer_snapshot
+        jsonb case_metadata_snapshot
+        text actual_answer
+        jsonb retrieved_sources
+        jsonb metrics
+        text status "completed, failed"
+        text error_message
+        int duration_ms
+        timestamptz created_at
+    }
+
+    users ||--o{ memberships : "CASCADE"
+    organizations ||--o{ memberships : "CASCADE"
+    organizations ||--o{ documents : "CASCADE"
+    users |o--o{ documents : "created_by, no DB ondelete, app nulls it"
+    documents ||--o{ document_versions : "CASCADE"
+    users |o--o{ document_versions : "uploaded_by, no DB ondelete, app nulls it"
+    document_versions ||--o{ chunks : "CASCADE"
+    chunks ||--o{ chunk_embeddings : "CASCADE"
+    organizations ||--o{ conversations : "CASCADE"
+    users ||--o{ conversations : "CASCADE"
+    conversations ||--o{ messages : "CASCADE"
+    organizations ||--o{ evaluation_datasets : "CASCADE"
+    users |o--o{ evaluation_datasets : "SET NULL"
+    evaluation_datasets ||--o{ evaluation_cases : "CASCADE"
+    evaluation_datasets ||--o{ evaluation_runs : "CASCADE"
+    users |o--o{ evaluation_runs : "SET NULL"
+    evaluation_runs ||--o{ evaluation_results : "CASCADE"
+    evaluation_cases |o--o{ evaluation_results : "SET NULL"
