@@ -4,7 +4,7 @@
 
 Upload PDFs, Word, Excel, Markdown and text files into an organization, then ask questions in chat. DocPilot retrieves the most relevant passages, answers only from that evidence, cites its sources, and shows a step-by-step trace of how the answer was produced. Everything runs on your own hardware: no third-party AI APIs.
 
-> **Status:** under active development. It runs locally via Docker Compose and has not been deployed to a server or cloud.
+> **Status:** under development. It runs locally via Docker Compose and has not been deployed to a server or cloud.
 
 ---
 
