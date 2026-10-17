@@ -25,3 +25,7 @@ AsyncSessionLocal = async_sessionmaker(
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
         yield session
+
+def get_evaluation_session_factory():
+    """Return the session factory used by background evaluation workers."""
+    return AsyncSessionLocal

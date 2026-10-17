@@ -340,8 +340,16 @@ async def test_evaluation_run_results_and_failure_filtering(
     )
     assert started.status_code == 201, started.text
 
+    # The POST response is serialized before its background task executes.
     run = started.json()
     assert run["dataset_id"] == dataset_id
+    assert run["status"] == "pending"
+
+    run_url = f"{runs_url}/{run['id']}"
+    fetched_run = await client.get(run_url, headers=headers)
+    assert fetched_run.status_code == 200, fetched_run.text
+    run = fetched_run.json()
+
     assert run["status"] == "completed"
     assert run["total_cases"] == 2
     assert run["completed_cases"] == 1
@@ -624,7 +632,17 @@ async def test_unexpected_run_error_marks_persisted_run_failed(
     )
     assert response.status_code == 201, response.text
 
+    # Fetch the persisted run after the background task has completed.
     run_data = response.json()
+    assert run_data["status"] == "pending"
+
+    run_response = await client.get(
+        f"{runs_url}/{run_data['id']}",
+        headers=headers,
+    )
+    assert run_response.status_code == 200, run_response.text
+    run_data = run_response.json()
+
     assert run_data["status"] == "failed"
     assert run_data["error_message"] == (
         "The evaluation run stopped because an unexpected internal "

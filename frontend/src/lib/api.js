@@ -240,6 +240,11 @@ export const api = {
       jsonRequest("POST", { top_k: topK })
     );
   },
+  evaluationRun(organizationId, datasetId, runId) {
+    return request(
+      `/organizations/${encodeURIComponent(organizationId)}/evaluation-datasets/${encodeURIComponent(datasetId)}/runs/${encodeURIComponent(runId)}`
+    );
+  },
   evaluationRunResults(organizationId, datasetId, runId) {
     return request(
       `/organizations/${encodeURIComponent(organizationId)}/evaluation-datasets/${encodeURIComponent(datasetId)}/runs/${encodeURIComponent(runId)}/results?include_failures=true&limit=200`

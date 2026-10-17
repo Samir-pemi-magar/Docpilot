@@ -3,8 +3,15 @@ from __future__ import annotations
 import json
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    status,
+)
+from sqlalchemy import func, select
 from sqlalchemy.sql import Select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,8 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.authorization import OrganizationAccess, get_organization_access
 from app.embeddings.base import EmbeddingProvider
 from app.embeddings.dependencies import get_embedding_provider
-from app.db.session import get_db_session
+from app.db.session import get_db_session, get_evaluation_session_factory
 from app.models.document import Document
+from app.models.evaluation_case import EvaluationCase
 from app.models.evaluation_dataset import EvaluationDataset
 from app.models.evaluation_result import EvaluationResult
 from app.models.evaluation_run import EvaluationRun
@@ -32,7 +40,7 @@ from app.schemas.evaluations import (
 )
 from app.services.evaluation_runner import (
     get_evaluation_llm_client,
-    run_evaluation,
+    run_evaluation_background,
 )
 from app.services.llm import OpenAICompatibleLLMClient
 from app.services.evaluations import (
@@ -609,26 +617,51 @@ async def start_evaluation_run(
     organization_id: uuid.UUID,
     dataset_id: uuid.UUID,
     payload: EvaluationRunCreate,
+    background_tasks: BackgroundTasks,
     access: OrganizationAccess = Depends(get_organization_access),
     db: AsyncSession = Depends(get_db_session),
+    session_factory=Depends(get_evaluation_session_factory),
     embedding_provider: EmbeddingProvider = Depends(get_embedding_provider),
     llm_client: OpenAICompatibleLLMClient = Depends(get_evaluation_llm_client),
 ) -> EvaluationRun:
-    """Execute an evaluation dataset and return its persisted run."""
+    """Create an evaluation run and schedule its execution."""
     dataset = await _require_dataset(
         db,
         organization_id=organization_id,
         dataset_id=dataset_id,
     )
 
-    return await run_evaluation(
-        db,
-        dataset=dataset,
+    total_cases = await db.scalar(
+        select(func.count())
+        .select_from(EvaluationCase)
+        .where(EvaluationCase.dataset_id == dataset.id)
+    )
+
+    run = EvaluationRun(
+        dataset_id=dataset.id,
+        started_by_user_id=access.user.id,
+        status="pending",
+        total_cases=total_cases or 0,
+        completed_cases=0,
+        failed_cases=0,
+        metrics={},
+    )
+    db.add(run)
+    await db.commit()
+    await db.refresh(run)
+
+    background_tasks.add_task(
+        run_evaluation_background,
+        session_factory=session_factory,
+        run_id=run.id,
+        dataset_id=dataset.id,
         user_id=access.user.id,
         embedding_provider=embedding_provider,
         llm_client=llm_client,
         top_k=payload.top_k,
     )
+
+    return run
 
 
 @router.get(

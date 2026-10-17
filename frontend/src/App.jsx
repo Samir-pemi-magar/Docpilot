@@ -880,6 +880,16 @@ export default function App() {
               </option>
             ))}
           </select>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveConversationId(null);
+              setOrganization(null);
+            }}
+            className="shrink-0 rounded border border-[var(--border)] px-2 py-1 text-xs text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
+          >
+            Manage organizations
+          </button>
         </div>
         <div className="flex items-center gap-3 min-w-0">
           <span className="text-xs text-[var(--muted-foreground)] truncate">

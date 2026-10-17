@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 import os
 
 os.environ["DATABASE_URL"] = (
@@ -17,7 +18,10 @@ from app.api.dependencies import (
     get_storage,
 )
 from app.auth.security import hash_password
-from app.db.session import get_db_session
+from app.db.session import (
+    get_db_session,
+    get_evaluation_session_factory,
+)
 from app.main import app
 from app.models.user import User
 from app.storage.local import LocalStorage
@@ -87,7 +91,15 @@ async def client(db_session, test_storage):
     async def override_get_db_session():
         yield db_session
 
+    @asynccontextmanager
+    async def override_evaluation_session_factory():
+        # Reuse the test transaction instead of opening the real application DB.
+        yield db_session
+
     app.dependency_overrides[get_db_session] = override_get_db_session
+    app.dependency_overrides[get_evaluation_session_factory] = (
+        lambda: override_evaluation_session_factory
+    )
     app.dependency_overrides[get_storage] = lambda: test_storage
     app.dependency_overrides[get_document_ingestion_task] = (
         lambda: _skip_document_ingestion

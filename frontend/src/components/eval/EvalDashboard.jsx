@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { api } from "../../lib/api";
 import Card from "../ui/Card";
 import EvalHistoryChart from "./EvalHistoryChart";
@@ -162,6 +164,51 @@ export default function EvalDashboard({ organizationId }) {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
   }
 
+  function documentIdentifierVariants(value) {
+    if (typeof value !== "string" || !value.trim()) return [];
+
+    const basename = value.trim().replace(/\\\\/g, "/").split("/").pop();
+    const normalized = basename.toLocaleLowerCase();
+    const withoutExtension = normalized.replace(/\\.[^.]+$/, "");
+
+    return [...new Set([normalized, withoutExtension])];
+  }
+
+  function autoMapDocumentLabels(labels, documents) {
+    const mapping = {};
+
+    for (const label of labels) {
+      const labelVariants = new Set(documentIdentifierVariants(label));
+      const candidates = new Set();
+
+      for (const document of documents) {
+        const identifiers = [
+          document.name,
+          ...(document.versions || []).map(
+            (version) => version.original_filename
+          ),
+        ];
+
+        const matches = identifiers.some((identifier) =>
+          documentIdentifierVariants(identifier).some((variant) =>
+            labelVariants.has(variant)
+          )
+        );
+
+        if (matches && document.id) {
+          candidates.add(document.id);
+        }
+      }
+
+      // Only map labels with exactly one distinct document candidate.
+      if (candidates.size === 1) {
+        mapping[label] = [...candidates][0];
+      }
+    }
+
+    return mapping;
+  }
+
   async function stageImportFile(event) {
     const input = event.target;
     const file = input.files?.[0];
@@ -184,9 +231,9 @@ export default function EvalDashboard({ organizationId }) {
 
     try {
       const content = await file.text();
-      const labels = new Set();
+      const labelDetails = new Map();
 
-      for (const [index, line] of content.split(/\\r?\\n/).entries()) {
+      for (const [index, line] of content.split(/\r?\n/).entries()) {
         if (!line.trim()) continue;
 
         let record;
@@ -197,24 +244,77 @@ export default function EvalDashboard({ organizationId }) {
         }
 
         const references = record?.relevant_document_ids;
-        if (Array.isArray(references)) {
-          for (const value of references) {
+        if (!Array.isArray(references)) continue;
+
+        const question =
+          typeof record.question === "string" ? record.question.trim() : "";
+        const sections = Array.isArray(record.relevant_sections)
+          ? record.relevant_sections.filter(
+              (section) => typeof section === "string" && section.trim()
+            )
+          : [];
+        const caseId =
+          typeof record.case_id === "string" && record.case_id.trim()
+            ? record.case_id.trim()
+            : `line-${index + 1}`;
+
+        for (const value of references) {
+          if (
+            typeof value !== "string" ||
+            !value.trim() ||
+            isDocumentUuid(value)
+          ) {
+            continue;
+          }
+
+          const detail = labelDetails.get(value) || {
+            questions: [],
+            sections: [],
+            caseIds: [],
+          };
+
+          if (
+            question &&
+            !detail.questions.includes(question) &&
+            detail.questions.length < 3
+          ) {
+            detail.questions.push(question);
+          }
+
+          for (const section of sections) {
             if (
-              typeof value === "string" &&
-              value.trim() &&
-              !isDocumentUuid(value)
+              !detail.sections.includes(section) &&
+              detail.sections.length < 5
             ) {
-              labels.add(value);
+              detail.sections.push(section);
             }
           }
+
+          if (!detail.caseIds.includes(caseId)) {
+            detail.caseIds.push(caseId);
+          }
+          labelDetails.set(value, detail);
         }
       }
 
-      const uniqueLabels = [...labels].sort((a, b) => a.localeCompare(b));
+      const uniqueLabels = [...labelDetails.keys()].sort(
+        (a, b) => a.localeCompare(b)
+      );
+
       setPendingImport({
         fileName: file.name,
         content,
         labels: uniqueLabels,
+        labelDetails: Object.fromEntries(
+          [...labelDetails.entries()].map(([label, detail]) => [
+            label,
+            {
+              questions: detail.questions,
+              sections: detail.sections,
+              caseCount: detail.caseIds.length,
+            },
+          ])
+        ),
       });
       setDocumentMapping({});
 
@@ -222,7 +322,12 @@ export default function EvalDashboard({ organizationId }) {
         setLoadingDocuments(true);
         try {
           const documents = await api.documents(organizationId);
-          setAvailableDocuments(Array.isArray(documents) ? documents : []);
+          const organizationDocuments = Array.isArray(documents) ? documents : [];
+
+          setAvailableDocuments(organizationDocuments);
+          setDocumentMapping(
+            autoMapDocumentLabels(uniqueLabels, organizationDocuments)
+          );
         } catch (err) {
           setAvailableDocuments([]);
           setError(
@@ -353,22 +458,51 @@ export default function EvalDashboard({ organizationId }) {
 
   async function runEvaluation() {
     if (!datasetId || !cases.length) return;
+
     setRunning(true);
     setError("");
     setNotice("");
     setRun(null);
     setResults([]);
+
     try {
-      const currentRun = await api.startEvaluationRun(
+      let currentRun = await api.startEvaluationRun(
         organizationId, datasetId, Number(topK)
       );
       setRun(currentRun);
+
+      // Poll the persisted run while the backend evaluates individual cases.
+      const deadline = Date.now() + 10 * 60 * 1000;
+
+      while (currentRun.status === "pending" || currentRun.status === "running") {
+        if (Date.now() >= deadline) {
+          throw new Error(
+            "This evaluation is taking longer than expected. Its status is saved; check the run again shortly."
+          );
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 800));
+
+        currentRun = await api.evaluationRun(
+          organizationId, datasetId, currentRun.id
+        );
+        setRun(currentRun);
+      }
+
+      // Results are requested only after the run reaches a terminal status.
       const data = await api.evaluationRunResults(
         organizationId, datasetId, currentRun.id
       );
       setResults(data);
       await loadHistory();
-      setNotice("Evaluation results loaded from the backend.");
+
+      if (currentRun.status === "failed") {
+        setError(
+          currentRun.error_message || "The evaluation run failed."
+        );
+      } else {
+        setNotice("Evaluation completed. Results loaded from the backend.");
+      }
     } catch (err) {
       setError(err.message || "Evaluation failed.");
     } finally {
@@ -455,29 +589,67 @@ export default function EvalDashboard({ organizationId }) {
                   </p>
                 )}
 
-                {pendingImport.labels.map((label) => (
-                  <label key={label} className="flex flex-col gap-1 text-xs">
-                    <span className="font-medium">{label}</span>
-                    <select
-                      className={field}
-                      value={documentMapping[label] || ""}
-                      onChange={(event) =>
-                        setDocumentMapping((current) => ({
-                          ...current,
-                          [label]: event.target.value,
-                        }))
-                      }
-                      disabled={loadingDocuments || importing}
+                {pendingImport.labels.map((label) => {
+                  const details = pendingImport.labelDetails?.[label];
+
+                  return (
+                    <div
+                      key={label}
+                      className="flex flex-col gap-2 rounded-md border border-[var(--border)] p-3"
                     >
-                      <option value="">Leave unmapped</option>
-                      {availableDocuments.map((document) => (
-                        <option key={document.id} value={document.id}>
-                          {document.name} — {document.id}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ))}
+                      <div>
+                        <p className="text-sm font-semibold">{label}</p>
+                        {details?.caseCount > 0 && (
+                          <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                            Referenced by {details.caseCount} benchmark case(s)
+                          </p>
+                        )}
+                      </div>
+
+                      {details?.questions?.length > 0 && (
+                        <div>
+                          <p className="text-xs font-medium">Example questions</p>
+                          <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-[var(--muted-foreground)]">
+                            {details.questions.map((question) => (
+                              <li key={question}>{question}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {details?.sections?.length > 0 && (
+                        <p className="text-xs text-[var(--muted-foreground)]">
+                          <span className="font-medium">Referenced sections:</span>{" "}
+                          {details.sections.join("; ")}
+                        </p>
+                      )}
+
+                      <label className="flex flex-col gap-1 text-xs">
+                        <span className="font-medium">
+                          Matching organization document
+                        </span>
+                        <select
+                          className={field}
+                          value={documentMapping[label] || ""}
+                          onChange={(event) =>
+                            setDocumentMapping((current) => ({
+                              ...current,
+                              [label]: event.target.value,
+                            }))
+                          }
+                          disabled={loadingDocuments || importing}
+                        >
+                          <option value="">Leave unmapped</option>
+                          {availableDocuments.map((document) => (
+                            <option key={document.id} value={document.id}>
+                              {document.name} — {document.id}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  );
+                })}
 
                 {pendingImport.labels.length > 0 && (
                   <p className="text-xs text-[var(--muted-foreground)]">
@@ -617,7 +789,45 @@ export default function EvalDashboard({ organizationId }) {
               {running ? "Running…" : "Run evaluation"}
             </button>
           </div>
-          {running && <p className="mt-3 text-sm text-[var(--muted-foreground)]">The backend is processing your questions. Please wait.</p>}
+          {running && (() => {
+            const total = Number(run?.total_cases || 0);
+            const completed = Number(run?.completed_cases || 0);
+            const failed = Number(run?.failed_cases || 0);
+            const processed = completed + failed;
+            const percent = total > 0
+              ? Math.min(100, Math.round((processed / total) * 100))
+              : 0;
+
+            return (
+              <div className="mt-4 space-y-2" aria-live="polite">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                  <span className="font-medium text-[var(--foreground)]">
+                    {run?.status === "pending" ? "Queued…" : "Evaluation in progress"}
+                  </span>
+                  <span className="text-[var(--muted-foreground)]">
+                    {processed} of {total} processed · {failed} failed
+                  </span>
+                </div>
+                <div
+                  className="h-2.5 overflow-hidden rounded-full bg-[var(--background)]"
+                  role="progressbar"
+                  aria-label="Evaluation progress"
+                  aria-valuemin={0}
+                  aria-valuemax={total || 1}
+                  aria-valuenow={processed}
+                  aria-valuetext={`${processed} of ${total} cases processed`}
+                >
+                  <div
+                    className="h-full rounded-full bg-[var(--primary)] transition-all duration-300"
+                    style={{ width: `${percent}%` }}
+                  />
+                </div>
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  {completed} completed successfully. The page updates as the backend finishes each question.
+                </p>
+              </div>
+            );
+          })()}
         </Panel>
 
         <Panel title="4. Recent retrieval history">
@@ -686,7 +896,11 @@ export default function EvalDashboard({ organizationId }) {
                       )}
                     <div className="mt-3">
                       <p className="text-xs font-semibold">Generated answer</p>
-                      <p className="mt-1 whitespace-pre-wrap text-sm">{result.actual_answer || "No answer produced."}</p>
+                      <div className="mt-1 text-sm leading-relaxed break-words [&_p]:my-2 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_strong]:font-semibold [&_em]:italic [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-1 [&_a]:text-[var(--primary)] [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--border)] [&_blockquote]:pl-3 [&_blockquote]:my-2 [&_code]:font-mono [&_code]:text-xs [&_code]:bg-[var(--secondary)] [&_code]:rounded [&_code]:px-1 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-[var(--secondary)] [&_pre]:p-3 [&_pre]:my-2 [&_table]:w-full [&_table]:text-left [&_table]:border-collapse [&_th]:border [&_th]:border-[var(--border)] [&_th]:p-2 [&_td]:border [&_td]:border-[var(--border)] [&_td]:p-2">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {(result.actual_answer || "No answer produced.").replace(/\\([\\`*_{}[\]()#+.!|>~-])/g, "$1")}
+                        </ReactMarkdown>
+                      </div>
                     </div>
                     {result.error_message && <p className="mt-3 whitespace-pre-wrap text-sm text-red-500">{result.error_message}</p>}
                     {result.metrics && Object.keys(result.metrics).length > 0 && (

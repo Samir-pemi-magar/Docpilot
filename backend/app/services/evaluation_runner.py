@@ -171,6 +171,7 @@ async def run_evaluation(
     embedding_provider: EmbeddingProvider,
     llm_client: Any,
     top_k: int = 5,
+    run: EvaluationRun | None = None,
 ) -> EvaluationRun:
     """Run a dataset and persist its run and per-case results."""
     if not 1 <= top_k <= 100:
@@ -184,20 +185,29 @@ async def run_evaluation(
     cases_result = await db.execute(query)
     cases = list(cases_result.scalars().all())
 
-    run = EvaluationRun(
-        dataset_id=dataset.id,
-        started_by_user_id=user_id,
-        status="running",
-        total_cases=len(cases),
-        completed_cases=0,
-        failed_cases=0,
-        metrics={},
-        started_at=datetime.now(timezone.utc),
-    )
-    db.add(run)
-    await db.flush()
+    if run is None:
+        run = EvaluationRun(
+            dataset_id=dataset.id,
+            started_by_user_id=user_id,
+            status="running",
+            total_cases=len(cases),
+            completed_cases=0,
+            failed_cases=0,
+            metrics={},
+            started_at=datetime.now(timezone.utc),
+        )
+        db.add(run)
+        await db.flush()
+    else:
+        run.status = "running"
+        run.total_cases = len(cases)
+        run.completed_cases = 0
+        run.failed_cases = 0
+        run.metrics = {}
+        run.error_message = None
+        run.started_at = datetime.now(timezone.utc)
 
-    # Save the run before potentially slow model calls begin.
+    # Persist the run before potentially slow model calls begin.
     await db.commit()
     await db.refresh(run)
 
@@ -390,3 +400,67 @@ async def run_evaluation(
         await db.commit()
         await db.refresh(persisted_run)
         return persisted_run
+
+
+async def run_evaluation_background(
+    *,
+    session_factory: Any,
+    run_id: uuid.UUID,
+    dataset_id: uuid.UUID,
+    user_id: uuid.UUID,
+    embedding_provider: EmbeddingProvider,
+    llm_client: Any,
+    top_k: int,
+) -> None:
+    """Execute a previously created run using an independent database session."""
+    import logging
+
+    from app.models.evaluation_run import EvaluationRun
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        async with session_factory() as db:
+            run = await db.get(EvaluationRun, run_id)
+            dataset = await db.get(EvaluationDataset, dataset_id)
+
+            if run is None or dataset is None:
+                logger.error(
+                    "Evaluation background task could not load run %s "
+                    "or dataset %s",
+                    run_id,
+                    dataset_id,
+                )
+                return
+
+            if run.status not in {"pending", "running"}:
+                return
+
+            await run_evaluation(
+                db,
+                dataset=dataset,
+                user_id=user_id,
+                embedding_provider=embedding_provider,
+                llm_client=llm_client,
+                top_k=top_k,
+                run=run,
+            )
+    except Exception:
+        logger.exception("Background evaluation failed for run %s", run_id)
+
+        try:
+            async with session_factory() as db:
+                run = await db.get(EvaluationRun, run_id)
+                if run is not None and run.status in {"pending", "running"}:
+                    run.status = "failed"
+                    run.error_message = (
+                        "The evaluation run stopped because an unexpected "
+                        "internal error occurred."
+                    )
+                    run.completed_at = datetime.now(timezone.utc)
+                    await db.commit()
+        except Exception:
+            logger.exception(
+                "Could not persist failure status for evaluation run %s",
+                run_id,
+            )
