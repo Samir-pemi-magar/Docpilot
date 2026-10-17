@@ -871,7 +871,13 @@ export default function App() {
             className="max-w-56 bg-transparent text-xs text-[var(--foreground)] border border-[var(--border)] rounded px-2 py-1"
           >
             {organizations.map((item) => (
-              <option key={item.id} value={item.id}>{item.name}</option>
+              <option
+                key={item.id}
+                value={item.id}
+                className="bg-white text-gray-900"
+              >
+                {item.name}
+              </option>
             ))}
           </select>
         </div>
