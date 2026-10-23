@@ -1,0 +1,294 @@
+[
+ {
+  "case_id": "DF-02",
+  "question": "How long does the courtesy car last under Comprehensive Plus?",
+  "needles": [
+   "courtesy car for up to 14 days"
+  ]
+ },
+ {
+  "case_id": "DF-06",
+  "question": "What is the emergency medical limit on Travel Plus?",
+  "needles": [
+   "$1,000,000"
+  ]
+ },
+ {
+  "case_id": "DF-07",
+  "question": "How long is the free-look period for a new motor policy?",
+  "needles": [
+   "15 days of receiving the policy documents"
+  ]
+ },
+ {
+  "case_id": "DF-08",
+  "question": "How long is the grace period for a customer who pays monthly?",
+  "needles": [
+   "15 calendar days"
+  ]
+ },
+ {
+  "case_id": "DF-09",
+  "question": "How soon must a car theft be reported to ESI?",
+  "needles": [
+   "within 48 hours"
+  ]
+ },
+ {
+  "case_id": "DF-11",
+  "question": "What is the claims hotline number?",
+  "needles": [
+   "+1 (555) 020-0911"
+  ]
+ },
+ {
+  "case_id": "DF-12",
+  "question": "Who is the Chief Claims Officer?",
+  "needles": [
+   "Rohan Mehta"
+  ]
+ },
+ {
+  "case_id": "DF-13",
+  "question": "How quickly does ESI acknowledge a complaint?",
+  "needles": [
+   "within 24 hours"
+  ]
+ },
+ {
+  "case_id": "DF-14",
+  "question": "How much premium tax is included in ESI premiums?",
+  "needles": [
+   "premium tax of 5 percent"
+  ]
+ },
+ {
+  "case_id": "DF-15",
+  "question": "How does ESI define a Business Day?",
+  "needles": [
+   "weekday that is not an ESI Closure Day"
+  ]
+ },
+ {
+  "case_id": "EX-01",
+  "question": "Does Home Standard cover flood damage?",
+  "needles": [
+   "Flood is excluded from Home Basic and Home Standard",
+   "after a 30-day waiting period"
+  ]
+ },
+ {
+  "case_id": "EX-02",
+  "question": "A new Home Premium policy started 20 days ago and the house floods today. Is the loss covered?",
+  "needles": [
+   "after a 30-day waiting period"
+  ]
+ },
+ {
+  "case_id": "EX-03",
+  "question": "A 23-year-old driver insured on Comprehensive makes an own-damage claim. What deductible applies?",
+  "needles": [
+   "additional deductible of $200"
+  ]
+ },
+ {
+  "case_id": "EX-04",
+  "question": "Can a customer on the Silver health plan get maternity cover?",
+  "needles": [
+   "Maternity cover is available only on Gold and Platinum"
+  ]
+ },
+ {
+  "case_id": "EX-05",
+  "question": "A 72-year-old wants travel insurance. Is it available and is there an extra charge?",
+  "needles": [
+   "age 80 at purchase",
+   "40 percent"
+  ]
+ },
+ {
+  "case_id": "EX-07",
+  "question": "A customer cancels a motor policy after ESI has already paid a claim in the Policy Year. Is any premium refunded?",
+  "needles": [
+   "no refund is due if a claim has been paid"
+  ]
+ },
+ {
+  "case_id": "EX-08",
+  "question": "A motor claim is reported 20 days after the damage. Can ESI automatically decline it for being late?",
+  "needles": [
+   "only if the delay prejudiced",
+   "within 14 days"
+  ]
+ },
+ {
+  "case_id": "EX-09",
+  "question": "ESI declares a catastrophe event after a storm. Are policyholders' deductibles waived?",
+  "needles": [
+   "deductibles"
+  ]
+ },
+ {
+  "case_id": "EX-10",
+  "question": "An 82-year-old asks to buy travel insurance. Can ESI sell it?",
+  "needles": [
+   "age 80 at purchase"
+  ]
+ },
+ {
+  "case_id": "XD-01",
+  "question": "A customer pays the annual premium for rating example RX-01 and cancels after 100 days with no claims. What refund does she get?",
+  "needles": [
+   "10 percent of the pro-rata refund, with a minimum of $25"
+  ]
+ },
+ {
+  "case_id": "XD-03",
+  "question": "Complete Documentation for a home claim reaches ESI on Monday 2027-12-06. By what date must ESI decide?",
+  "needles": [
+   "15 Business Days",
+   "starts on the Business Day after Complete Documentation",
+   "weekday that is not an ESI Closure Day",
+   "2027-12-24"
+  ]
+ },
+ {
+  "case_id": "XD-04",
+  "question": "A monthly-paying customer misses the premium due 2027-03-01. On 2027-03-10 she has a covered motor accident on Comprehensive, assessed at $2,000, with $60 of premium overdue. How much does ESI pay?",
+  "needles": [
+   "15 calendar days",
+   "unpaid premium is deducted"
+  ]
+ },
+ {
+  "case_id": "XD-05",
+  "question": "A customer is unhappy with a branch's answer to her complaint. Who handles the next step and how long do they have?",
+  "needles": [
+   "Level 2 - Customer Relations Manager: 15 Business Days",
+   "Sandra Whitlow"
+  ]
+ },
+ {
+  "case_id": "XD-06",
+  "question": "Can a Branch Manager approve a $1,500 goodwill payment? If not, who can?",
+  "needles": [
+   "up to $500",
+   "up to $2,000",
+   "Sandra Whitlow"
+  ]
+ },
+ {
+  "case_id": "XD-07",
+  "question": "In the claims register, claim CLM-27-0008 was reported 28 days after the loss. Was it late, and can ESI decline it for that reason alone?",
+  "needles": [
+   "within 14 days",
+   "only if the delay prejudiced"
+  ]
+ },
+ {
+  "case_id": "XD-08",
+  "question": "A Comprehensive motor loss happened on 2026-12-20 and is assessed at $2,000. What does ESI pay?",
+  "needles": [
+   "version in force on the date of loss"
+  ]
+ },
+ {
+  "case_id": "XD-09",
+  "question": "A Silver-plan member has $4,000 of covered costs this year and no earlier claims. How much does she pay and how much does ESI pay?",
+  "needles": [
+   "20 percent",
+   "Co-payment is a percentage of the covered cost"
+  ]
+ },
+ {
+  "case_id": "XD-10",
+  "question": "A customer is admitted to a hospital abroad. Whom should she call and by when?",
+  "needles": [
+   "within 48 hours of hospital admission",
+   "+1 (555) 020-0777"
+  ]
+ },
+ {
+  "case_id": "NC-01",
+  "question": "What is the total premium for TPFT, vehicle class C, driver aged 26, 2 claim-free years, no multi-policy discount, paid monthly?",
+  "needles": [
+   "rounded to the nearest cent once, at the end",
+   "premium tax of 5 percent",
+   "instalment surcharge of 6 percent"
+  ]
+ },
+ {
+  "case_id": "NC-02",
+  "question": "What is the total annual premium for COMP+, class B, age 29, 4 claim-free years, with the multi-policy discount, paid annually?",
+  "needles": [
+   "rounded to the nearest cent once, at the end"
+  ]
+ },
+ {
+  "case_id": "NC-03",
+  "question": "A Gold member has $10,000 of covered costs. How much does the member pay in total?",
+  "needles": [
+   "10 percent"
+  ]
+ },
+ {
+  "case_id": "NC-04",
+  "question": "A Bronze member has $30,000 of covered costs in the year. What is the most the member pays?",
+  "needles": [
+   "30 percent"
+  ]
+ },
+ {
+  "case_id": "NC-06",
+  "question": "A 22-year-old on Comprehensive Plus has a covered own-damage loss assessed at $3,000. What does ESI pay?",
+  "needles": [
+   "additional deductible of $200"
+  ]
+ },
+ {
+  "case_id": "NC-07",
+  "question": "If the base Travel Plus premium for a 74-year-old is $200, what is the premium after the age surcharge?",
+  "needles": [
+   "40 percent",
+   "age 80 at purchase"
+  ]
+ },
+ {
+  "case_id": "NC-08",
+  "question": "A car worth $15,000 has a repair estimate of $10,000. Is it a total loss?",
+  "needles": [
+   "70 percent of the market value"
+  ]
+ },
+ {
+  "case_id": "FA-01",
+  "question": "Since flood cover is included in every home plan, can a Home Basic customer claim for a flood?",
+  "needles": [
+   "Flood is excluded from Home Basic and Home Standard",
+   "after a 30-day waiting period"
+  ]
+ },
+ {
+  "case_id": "FA-02",
+  "question": "Everyone has a 30-day grace period, so a monthly payer who missed a payment has 30 days. Is that right?",
+  "needles": [
+   "30 calendar days",
+   "15 calendar days"
+  ]
+ },
+ {
+  "case_id": "HV-01",
+  "question": "What were the free-look and grace periods under TC-2026.2, and what are they now?",
+  "needles": [
+   "15 days of receiving the policy documents",
+   "30 calendar days"
+  ]
+ },
+ {
+  "case_id": "HV-02",
+  "question": "What was the motor-damage reporting limit under CP-2026.1, and what is it now?",
+  "needles": [
+   "within 14 days"
+  ]
+ }
+]

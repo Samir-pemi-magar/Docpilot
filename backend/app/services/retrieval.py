@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 
@@ -97,6 +98,33 @@ async def retrieve_chunks(
     ]
 
 
+_KEYWORD_STOPWORDS = frozenset(
+    "a an and are as at be been but by can could did do does for from had has have how i if in into is it its me my "
+    "of on or our so than that the their then there these they this to was we were what when where which who whom why "
+    "will with would you your".split()
+)
+
+
+def _keyword_or_query(query: str) -> str | None:
+    """Build an OR tsquery from the meaningful words of a natural-language question.
+
+    websearch_to_tsquery with the 'simple' configuration requires EVERY word (including "can", "a", "the")
+    to appear in one chunk, so ordinary questions almost never match. This keeps the content words and
+    matches chunks containing any of them; ts_rank_cd then ranks chunks containing more of them higher.
+    """
+
+    seen: set[str] = set()
+    kept: list[str] = []
+    for token in re.findall(r"[^\W_]+", query.lower()):
+        if token in _KEYWORD_STOPWORDS or token in seen:
+            continue
+        if len(token) == 1 and not token.isdigit():
+            continue
+        seen.add(token)
+        kept.append(token)
+    return " | ".join(kept) if kept else None
+
+
 async def retrieve_keyword_chunks(
     db: AsyncSession,
     *,
@@ -134,6 +162,13 @@ async def retrieve_keyword_chunks(
     parsed_query = func.websearch_to_tsquery(literal_column("'simple'::regconfig"), query)
     text_rank = func.ts_rank_cd(document_vector, parsed_query)
     text_match = document_vector.op("@@")(parsed_query)
+
+    # Also match chunks that contain any of the question's content words (see _keyword_or_query).
+    or_query_text = _keyword_or_query(query)
+    if or_query_text:
+        or_query = func.to_tsquery(literal_column("'simple'::regconfig"), or_query_text)
+        text_rank = text_rank + func.ts_rank_cd(document_vector, or_query)
+        text_match = or_(text_match, document_vector.op("@@")(or_query))
 
     statement = (
         select(
