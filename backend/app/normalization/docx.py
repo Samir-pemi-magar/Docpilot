@@ -36,6 +36,16 @@ class DOCXNormalizer:
                     )
                 )
 
+            elif element.element_type == "table":
+                elements.append(
+                    NormalizedElement(
+                        element_type=NormalizedElementType.TABLE,
+                        text=text,
+                        metadata=element.metadata.copy(),
+                        content=element.content,
+                    )
+                )
+
             elif element.element_type == "paragraph":
                 elements.append(
                     NormalizedElement(

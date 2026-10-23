@@ -152,7 +152,11 @@ def _build_retrieved_context(
 
         # Only treat content as a table when it has a header and at least
         # one other pipe-delimited line.
-        if len(pipe_indexes) < 2:
+        non_empty_lines = [line for line in lines if line.strip()]
+        # Treat a chunk as a table only when most of its lines are table rows.
+        # Prose chunks often contain a couple of lines with "|" (document header,
+        # page footer); treating those as tables dropped all the other text.
+        if len(pipe_indexes) < 2 or len(pipe_indexes) < 0.5 * len(non_empty_lines):
             candidate = f"[Source {len(parts) + 1}]\n{source_text}"
             if fits(candidate):
                 parts.append(candidate)

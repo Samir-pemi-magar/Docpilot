@@ -137,7 +137,7 @@ export const api = {
     );
   },
 
-  chat(organizationId, query, conversationId = null, topK = 5) {
+  chat(organizationId, query, conversationId = null, topK = 8) {
     return request(
       `/organizations/${encodeURIComponent(organizationId)}/chat`,
       jsonRequest("POST", {

@@ -67,7 +67,7 @@ dev: ## Start database, LLM, backend, frontend, and open browser
 	echo "=== Starting backend ==="; \
 	if ! { test -f "$(RUNTIME_DIR)/backend.pid" && kill -0 "$$(cat "$(RUNTIME_DIR)/backend.pid")" 2>/dev/null; }; then \
 		rm -f "$(RUNTIME_DIR)/backend.pid"; \
-		nohup sh -c 'exec uv run uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000 --reload' \
+		nohup sh -c 'exec env CUDA_VISIBLE_DEVICES= uv run uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000 --reload' \
 			>"$(RUNTIME_DIR)/backend.log" 2>&1 </dev/null & \
 		echo $$! > "$(RUNTIME_DIR)/backend.pid"; \
 	fi; \
