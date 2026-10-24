@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     llm_model: str = "docpilot-qwen3-4b"
     llm_timeout_seconds: float = 60.0
     llm_thinking_mode: str = "auto"  # auto | always | never
+    llm_thinking_temperature: float = 0.6
     llm_thinking_timeout_seconds: float = 75.0
     llm_thinking_max_tokens: int = 3000
     llm_max_tokens: int = 700

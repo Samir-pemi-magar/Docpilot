@@ -98,6 +98,12 @@ async def retrieve_chunks(
     ]
 
 
+# The strict keyword search (websearch_to_tsquery) needs EVERY word of the question to appear in one chunk, so natural
+# questions rarely match. The "any content word" list below adds recall, but it is noisy, so it is merged with a
+# lower weight than the vector and strict keyword lists (1.0). Set KEYWORD_OR_WEIGHT to 0 to switch it off.
+KEYWORD_OR_WEIGHT = 0.10
+KEYWORD_OR_CANDIDATES = 10
+
 _KEYWORD_STOPWORDS = frozenset(
     "a an and are as at be been but by can could did do does for from had has have how i if in into is it its me my "
     "of on or our so than that the their then there these they this to was we were what when where which who whom why "
@@ -106,12 +112,7 @@ _KEYWORD_STOPWORDS = frozenset(
 
 
 def _keyword_or_query(query: str) -> str | None:
-    """Build an OR tsquery from the meaningful words of a natural-language question.
-
-    websearch_to_tsquery with the 'simple' configuration requires EVERY word (including "can", "a", "the")
-    to appear in one chunk, so ordinary questions almost never match. This keeps the content words and
-    matches chunks containing any of them; ts_rank_cd then ranks chunks containing more of them higher.
-    """
+    """Build an OR tsquery from the meaningful words of a natural-language question."""
 
     seen: set[str] = set()
     kept: list[str] = []
@@ -123,6 +124,39 @@ def _keyword_or_query(query: str) -> str | None:
         seen.add(token)
         kept.append(token)
     return " | ".join(kept) if kept else None
+
+
+async def retrieve_keyword_or_chunks(
+    db: AsyncSession,
+    *,
+    organization_id: uuid.UUID,
+    query: str,
+    top_k: int = 5,
+) -> list[RetrievedChunk]:
+    """Retrieve chunks containing ANY content word of the question, ranked by how many they contain."""
+
+    _validate_top_k(top_k)
+    or_terms = _keyword_or_query(query)
+    if not or_terms:
+        return []
+
+    document_vector = func.to_tsvector(literal_column("'simple'::regconfig"), Chunk.text)
+    or_query = func.to_tsquery(literal_column("'simple'::regconfig"), or_terms)
+    text_rank = func.ts_rank_cd(document_vector, or_query)
+
+    statement = (
+        select(Chunk, Document.id, Document.name)
+        .join(DocumentVersion, DocumentVersion.id == Chunk.document_version_id)
+        .join(Document, Document.id == DocumentVersion.document_id)
+        .where(Document.organization_id == organization_id, document_vector.op("@@")(or_query))
+        .order_by(text_rank.desc(), Chunk.id)
+        .limit(top_k)
+    )
+    result = await db.execute(statement)
+    return [
+        RetrievedChunk(chunk=chunk, distance=None, model=None, document_id=document_id, document_name=document_name)
+        for chunk, document_id, document_name in result.all()
+    ]
 
 
 async def retrieve_keyword_chunks(
@@ -162,13 +196,6 @@ async def retrieve_keyword_chunks(
     parsed_query = func.websearch_to_tsquery(literal_column("'simple'::regconfig"), query)
     text_rank = func.ts_rank_cd(document_vector, parsed_query)
     text_match = document_vector.op("@@")(parsed_query)
-
-    # Also match chunks that contain any of the question's content words (see _keyword_or_query).
-    or_query_text = _keyword_or_query(query)
-    if or_query_text:
-        or_query = func.to_tsquery(literal_column("'simple'::regconfig"), or_query_text)
-        text_rank = text_rank + func.ts_rank_cd(document_vector, or_query)
-        text_match = or_(text_match, document_vector.op("@@")(or_query))
 
     statement = (
         select(
@@ -287,18 +314,31 @@ async def retrieve_hybrid_chunks(
         top_k=candidate_k,
     )
 
+    or_results: list[RetrievedChunk] = []
+    if KEYWORD_OR_WEIGHT > 0:
+        or_results = await retrieve_keyword_or_chunks(
+            db,
+            organization_id=organization_id,
+            query=query,
+            top_k=min(KEYWORD_OR_CANDIDATES, candidate_k),
+        )
+
     # Reciprocal-rank fusion combines ranks, not incomparable raw scores.
     # Rank positions start at 1; 60 is a conventional smoothing constant.
     rrf_constant = 60
     fused_scores: dict[uuid.UUID, float] = {}
     candidates: dict[uuid.UUID, RetrievedChunk] = {}
 
-    for results in (vector_results, keyword_results):
+    for results, weight in (
+        (vector_results, 1.0),
+        (keyword_results, 1.0),
+        (or_results, KEYWORD_OR_WEIGHT),
+    ):
         for rank, item in enumerate(results, start=1):
             chunk_id = item.chunk.id
             fused_scores[chunk_id] = (
                 fused_scores.get(chunk_id, 0.0)
-                + 1.0 / (rrf_constant + rank)
+                + weight / (rrf_constant + rank)
             )
 
             existing = candidates.get(chunk_id)

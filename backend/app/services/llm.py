@@ -71,6 +71,7 @@ class OpenAICompatibleLLMClient:
         self.thinking_mode = getattr(settings, "llm_thinking_mode", "auto")
         self.thinking_timeout_seconds = float(getattr(settings, "llm_thinking_timeout_seconds", 75.0))
         self.thinking_max_tokens = int(getattr(settings, "llm_thinking_max_tokens", 3000))
+        self.thinking_temperature = float(getattr(settings, "llm_thinking_temperature", 0.6))
         self.max_tokens = int(getattr(settings, "llm_max_tokens", 700))
 
         if self.timeout_seconds <= 0:
@@ -135,7 +136,7 @@ class OpenAICompatibleLLMClient:
         }
         if thinking:
             # Recommended sampling for Qwen3 thinking mode; greedy decoding can loop without finishing.
-            payload.update({"temperature": 0.6, "top_p": 0.95, "top_k": 20})
+            payload.update({"temperature": self.thinking_temperature, "top_p": 0.95, "top_k": 20})
         else:
             payload["temperature"] = 0.0
 

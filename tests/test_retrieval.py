@@ -734,17 +734,15 @@ def test_keyword_or_query_keeps_content_words_only():
     assert _keyword_or_query("7319") == "7319"
 
 
-async def test_keyword_retrieval_matches_natural_question_when_not_every_word_is_present(
-    db_session,
-    test_user,
-):
+async def test_any_word_keyword_list_finds_chunk_when_not_every_word_is_present(db_session, test_user):
+    from app.services.retrieval import retrieve_keyword_or_chunks
+
     organization = await create_organization(
         db_session=db_session,
         owner_id=test_user.id,
         name="Natural Question Organization",
         slug=f"natural-question-{uuid.uuid4()}",
     )
-
     matching = await create_chunk_with_embedding(
         db_session,
         organization_id=organization.id,
@@ -763,12 +761,18 @@ async def test_keyword_retrieval_matches_natural_question_when_not_every_word_is
     )
     await db_session.commit()
 
-    results = await retrieve_keyword_chunks(
+    results = await retrieve_keyword_or_chunks(
         db_session,
         organization_id=organization.id,
         query="Can a Branch Manager approve a $1,500 goodwill payment?",
         top_k=5,
     )
+    assert results and results[0].chunk.id == matching.id
 
-    assert results
-    assert results[0].chunk.id == matching.id
+    strict = await retrieve_keyword_chunks(
+        db_session,
+        organization_id=organization.id,
+        query="Can a Branch Manager approve a $1,500 goodwill payment?",
+        top_k=5,
+    )
+    assert strict == []  # the strict search alone misses it, which is why the extra list exists
