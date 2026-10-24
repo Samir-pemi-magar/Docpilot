@@ -224,3 +224,17 @@ async def test_non_answer_prompts_never_think_and_mode_never_disables_thinking(m
     client.thinking_mode = "always"
     await client.generate(_answer_prompt("Who is the Chief Claims Officer?"))
     assert seen == [False, False, True]
+
+
+@pytest.mark.asyncio
+async def test_thinking_temperature_is_adjustable():
+    seen = []
+
+    def handler(request):
+        seen.append(_json.loads(request.content)["temperature"])
+        return _ok("ok")
+
+    client = OpenAICompatibleLLMClient(base_url="http://llm.test/v1", model="m", transport=httpx.MockTransport(handler))
+    client.thinking_temperature = 0.3
+    await client.generate(_answer_prompt("I have a $10,000 hospital bill on Gold. How much do I pay?"))
+    assert seen == [0.3]
