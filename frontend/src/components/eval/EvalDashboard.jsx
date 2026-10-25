@@ -513,6 +513,14 @@ export default function EvalDashboard({ organizationId }) {
   const metrics = run?.metrics || {};
   const evaluated = Number(metrics.retrieval_evaluated_cases || 0);
   const metricsAvailable = evaluated > 0;
+  const factCoverageCases = Number(
+    metrics.essential_fact_coverage_evaluated_cases || 0
+  );
+  const answerabilityCases = Number(
+    metrics.answerability_compliance_evaluated_cases || 0
+  );
+  const answerQualityAvailable =
+    factCoverageCases > 0 || answerabilityCases > 0;
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-6">
@@ -857,7 +865,63 @@ export default function EvalDashboard({ organizationId }) {
             {run.error_message && <p className="mt-3 text-sm text-red-500">{run.error_message}</p>}
           </Panel>
 
-          <Panel title="6. Results">
+          <Panel title="6. Answer quality diagnostics">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Metric
+                label="Essential-fact coverage"
+                value={
+                  factCoverageCases > 0
+                    ? percentage(metrics.essential_fact_coverage)
+                    : "N/A"
+                }
+              />
+              <Metric
+                label="Answerability compliance"
+                value={
+                  answerabilityCases > 0
+                    ? percentage(metrics.answerability_compliance)
+                    : "N/A"
+                }
+              />
+            </div>
+            <p className="mt-3 text-xs text-[var(--muted-foreground)]">
+              Essential-fact coverage: {factCoverageCases} labelled case(s).
+              {" "}
+              Answerability compliance: {answerabilityCases} labelled case(s).
+            </p>
+            <div className="mt-3 rounded-md bg-[var(--background)] p-3 text-xs leading-relaxed text-[var(--muted-foreground)]">
+              {answerQualityAvailable ? (
+                <>
+                  <p>
+                    <strong>Essential-fact coverage</strong> measures whether
+                    expected fact wording appears in generated answers. Correct
+                    paraphrases may not match.
+                  </p>
+                  <p className="mt-2">
+                    <strong>Answerability compliance</strong> measures whether
+                    the answer's detected abstention behavior matches the
+                    benchmark's answerable label.
+                  </p>
+                  <p className="mt-2">
+                    These are lexical and heuristic diagnostics, not a
+                    semantic assessment of factual correctness. Only cases
+                    with the relevant labels contribute to each score.
+                  </p>
+                </>
+              ) : (
+                <p>
+                  No answer-quality labels were evaluated. Add
+                  {" "}
+                  <code>essential_facts</code> or a boolean
+                  {" "}
+                  <code>answerable</code> field to benchmark case metadata to
+                  enable these diagnostics.
+                </p>
+              )}
+            </div>
+          </Panel>
+
+          <Panel title="7. Results">
             {!results.length ? <p className="text-sm text-[var(--muted-foreground)]">No result records were returned.</p> : (
               <div className="flex flex-col gap-4">
                 {results.map((result, i) => (
