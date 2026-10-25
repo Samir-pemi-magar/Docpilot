@@ -1,5 +1,6 @@
 %% DocPilot - Chat / RAG sequence: POST /organizations/{org}/chat
 %% Single request/response (no streaming on the backend).
+%% Changes vs. previous version: three-list retrieval, adaptive thinking in the LLM client.
 sequenceDiagram
     autonumber
     actor U as User
@@ -11,7 +12,7 @@ sequenceDiagram
     participant LLM as llama.cpp server
 
     U->>FE: type question
-    FE->>API: POST /api/organizations/ORG/chat {query, top_k, conversation_id?}
+    FE->>API: POST /api/organizations/ORG/chat {query, top_k=5, conversation_id?}
     API->>AZ: get_current_user, get_organization_access
     AZ->>DB: load active user, load membership
     AZ-->>API: OrganizationAccess (401 or 403 on failure)
@@ -33,21 +34,22 @@ sequenceDiagram
     else general-knowledge question
         API->>LLM: general-knowledge prompt (no documents)
     else document question
-        opt follow-up pattern needs history
+        opt follow-up pattern needs history ("and ...", "what about ...")
             API->>LLM: rewrite as standalone question (history sent here only)
             LLM-->>API: standalone question (503 if LLM fails)
         end
         API->>EM: embed_query (threadpool)
         EM-->>API: 1024-d vector
-        API->>DB: vector query + keyword query (organization scoped)
+        API->>DB: vector query + strict keyword query + OR-keyword query (organization scoped)
         DB-->>API: candidates
-        API->>API: RRF fusion, heuristic boosts, top_k
+        API->>API: RRF fusion (weights 1.0 / 1.0 / 0.10), heuristic boosts, top_k
         alt no chunks retrieved
             API->>API: fixed "couldn't find relevant information" answer, no LLM
         else chunks found
             API->>API: build context (max 12,000 chars) + system prompt
             API->>LLM: question + excerpts (no chat history)
-            LLM-->>API: answer (503 if LLM fails)
+            Note over API,LLM: client picks fast mode (temp 0) or thinking mode<br/>(numbers, dates, eligibility wording).<br/>If thinking fails, times out or is cut off,<br/>it retries once in fast mode
+            LLM-->>API: answer (503 if both attempts fail)
             API->>API: year-specific admissions deadline guard
         end
     end
@@ -56,3 +58,4 @@ sequenceDiagram
     API->>DB: INSERT user message + assistant message (with sources JSON), COMMIT
     API-->>FE: ChatResponse {conversation_id, answer, sources, trace[]}
     FE-->>U: render answer, sources panel, trace panel
+    FE->>API: GET /conversations (refresh sidebar)

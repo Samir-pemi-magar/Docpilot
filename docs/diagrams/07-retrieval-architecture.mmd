@@ -1,39 +1,50 @@
 %% DocPilot - Retrieval architecture (services/retrieval.py, used by chat, search, evaluations)
+%% Changes vs. previous version: third "OR keyword" branch (weight 0.10);
+%% context builder only treats a chunk as a table when most lines are table rows.
 flowchart TD
-    q["User query<br/>chat: standalone_query (rewritten only for some follow-ups)<br/>search: payload.query, top_k 1..100<br/>chat top_k 1..10"]
+    q["User query<br/>chat: standalone_query (rewritten only for some follow-ups)<br/>search: payload.query, top_k 1..100<br/>chat top_k 1..10 (UI sends 5)<br/>evaluation: case question, top_k 1..100"]
     emb["embedding_provider.embed_query<br/>BGE-M3 dense, 1024-d<br/>run_in_threadpool<br/>dimension must equal 1024"]
     hyb["retrieve_hybrid_chunks<br/>candidate_k = min(max(top_k x 4, 20), 100)"]
 
-    subgraph vec["Vector branch: retrieve_chunks"]
+    subgraph vec["Vector branch: retrieve_chunks (weight 1.0)"]
         v1["SELECT chunks JOIN chunk_embeddings<br/>JOIN document_versions JOIN documents"]
         v2["WHERE documents.organization_id = org<br/>AND chunk_embeddings.model = query model"]
         v3["ORDER BY cosine_distance(embedding, query vector)<br/>LIMIT candidate_k<br/>exact scan: no HNSW/IVFFlat index found"]
         v1 --> v2 --> v3
     end
 
-    subgraph kw["Keyword branch: retrieve_keyword_chunks"]
+    subgraph kw["Strict keyword branch: retrieve_keyword_chunks (weight 1.0)"]
         k1["same joins and organization filter"]
-        k2["match: to_tsvector('simple', text) @@ websearch_to_tsquery<br/>OR text ILIKE literal substring (escaped)"]
+        k2["match: to_tsvector('simple', text) @@ websearch_to_tsquery<br/>(every word must appear)<br/>OR text ILIKE literal substring (escaped)"]
         k3["ORDER BY literal_match DESC, ts_rank_cd DESC, chunk id<br/>LIMIT candidate_k<br/>GIN index ix_chunks_text_search"]
         k1 --> k2 --> k3
     end
 
-    rrf["Reciprocal rank fusion<br/>score = sum of 1 / (60 + rank) over both lists<br/>keep vector distance when available"]
+    subgraph kwor["OR keyword branch: retrieve_keyword_or_chunks (weight KEYWORD_OR_WEIGHT = 0.10)"]
+        o1["drop stopwords and 1-letter tokens,<br/>join remaining words with ' | '"]
+        o2["match: to_tsvector('simple', text) @@ to_tsquery(OR terms)<br/>ANY content word<br/>ORDER BY ts_rank_cd DESC<br/>LIMIT 10 (KEYWORD_OR_CANDIDATES)"]
+        o1 --> o2
+    end
+
+    rrf["Reciprocal rank fusion<br/>score = sum of weight / (60 + rank) over the three lists<br/>keep vector distance when available<br/>set KEYWORD_OR_WEIGHT = 0 to disable the OR branch"]
     adj["Heuristic score adjustments<br/>table chunk whose table_title overlaps query terms:<br/>x3.0 for refund intent, x1.5 for deadline/price/cost/rate/value/amount, x1.2 otherwise<br/>chunk title marked historical/superseded/for reference only:<br/>x0.5 normally, x2.0 if query asks for past policy"]
     top["Sort by adjusted score, take top_k<br/>RetrievedChunk: chunk, distance (None if keyword only),<br/>model, document_id, document_name"]
 
     subgraph ctx["Context assembly (chat only: _build_retrieved_context)"]
         c1["label each source [Source n]"]
         c2["12,000 character cap<br/>whole chunks only"]
-        c3["pipe-delimited tables: keep prefix + header,<br/>add complete rows until cap,<br/>skip table if header does not fit"]
-        c1 --> c2 --> c3
+        c3["chunk is a table only if it has 2+ pipe lines<br/>AND pipe lines are at least half of non-empty lines<br/>(prose with a header/footer containing '|' stays prose)"]
+        c4["tables: keep prefix + header,<br/>add complete rows until cap,<br/>skip table if header does not fit"]
+        c1 --> c2 --> c3 --> c4
     end
 
     q --> emb --> hyb
     hyb --> vec
     hyb --> kw
+    hyb --> kwor
     vec --> rrf
     kw --> rrf
+    kwor --> rrf
     rrf --> adj --> top
     top -->|"POST /search: return chunk text + distance"| out1["SearchResponse"]
     top -->|"chat"| ctx --> out2["LLM prompt"]

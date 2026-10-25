@@ -1,5 +1,6 @@
 %% DocPilot - Document ingestion pipeline
 %% ingestion_status values (DB check constraint): pending, processing, completed, failed
+%% Changes vs. previous version: DOCX tables ARE extracted; XLSX uses saved formula results.
 flowchart TD
     up["POST /organizations/{org}/documents<br/>or POST .../documents/{id}/versions<br/>requires role owner or admin<br/>multipart: name + file"]
     chk{"filename present?"}
@@ -25,14 +26,14 @@ flowchart TD
         open["open file from StorageService"]
         parse{"ParserRegistry<br/>by file extension"}
         unsupp["UnsupportedDocumentTypeError"]
-        pdf["PDF: PyMuPDF text + find_tables<br/>no OCR code present"]
-        docx["DOCX: python-docx paragraphs<br/>tables counted in metadata only,<br/>content not extracted"]
-        xlsx["XLSX: openpyxl worksheets"]
+        pdf["PDF: PyMuPDF per page<br/>find_tables + text blocks outside tables<br/>table title from 'Table N' header or nearby short heading<br/>no OCR code present"]
+        docx["DOCX: python-docx, body walked in order<br/>headings, paragraphs AND tables<br/>(rows joined with ' | ', title = 'Table N' cell<br/>or last heading)"]
+        xlsx["XLSX: openpyxl, two passes<br/>formulas + saved results (data_only)<br/>saved value indexed; empty formula results skipped"]
         txt["TXT / MD / MARKDOWN"]
         ext["ExtractedDocument"]
-        norm["NormalizerRegistry by source_type<br/>-> NormalizedDocument<br/>heading, paragraph, table, key_value"]
-        chunk["HybridChunker<br/>prose runs -> ProseChunker<br/>table/key_value runs -> StructuredChunker<br/>500 target / 800 max / 75 overlap<br/>whitespace token counter"]
-        embed["embed_documents in threadpool<br/>BAAI/bge-m3, dense 1024-d<br/>batch size up to 8"]
+        norm["NormalizerRegistry by source_type<br/>-> NormalizedDocument<br/>heading, paragraph, table, key_value<br/>(XLSX: dense cell regions -> table / key_value)"]
+        chunk["HybridChunker<br/>prose runs -> ProseChunker<br/>table/key_value runs -> StructuredChunker<br/>(rows kept whole, header repeated per chunk,<br/>Worksheet / Table / Page prefix added)<br/>500 target / 800 max / 75 overlap<br/>whitespace token counter"]
+        embed["embed_documents in threadpool<br/>BAAI/bge-m3, dense 1024-d<br/>batch size up to 8, max_length 1024"]
         lock["lock document_versions row FOR UPDATE"]
         persist["one transaction:<br/>DELETE existing chunks of version<br/>INSERT chunks<br/>INSERT chunk_embeddings<br/>status = completed"]
         fail["any exception: rollback<br/>status = failed<br/>logged, no retry"]
@@ -59,7 +60,7 @@ flowchart TD
     sync --> resp
     sync --> bgq --> async
 
-    note1["Upload accepts any file type.<br/>Unsupported types are only rejected<br/>later, as ingestion_status = failed.<br/>No startup recovery of versions<br/>stuck in processing was found."]
+    note1["Upload accepts any file type.<br/>Unsupported types are only rejected<br/>later, as ingestion_status = failed.<br/>No startup recovery of versions<br/>stuck in processing was found.<br/>The UI does not display ingestion_status."]
     async ~~~ note1
     classDef note fill:#fff,stroke:#999,stroke-dasharray: 4 4,color:#555
     class note1 note

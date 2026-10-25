@@ -1,0 +1,45 @@
+%% DocPilot - LLM client: adaptive thinking mode (services/llm.py)  [NEW diagram]
+%% Used by chat (answer + question rewrite + small talk) and by evaluation runs.
+flowchart TD
+    gen["OpenAICompatibleLLMClient.generate(messages)<br/>ValueError if messages is empty"]
+    mode{"LLM_THINKING_MODE"}
+    never["never: skip thinking"]
+    always["always: think for answer prompts"]
+    auto["auto (default)"]
+    isans{"last user message matches<br/>'Question:' ... 'Retrieved document excerpts:' ?<br/>(answer prompts only; rewrite prompt and<br/>small talk do not match)"}
+    heur{"needs_reasoning(question)<br/>contains a digit, OR wording such as<br/>how much / how many / total / calculate / refund / premium /<br/>deadline / by when / when must|will|does / approve /<br/>eligible / am I covered / can I / should I / ago ..."}
+
+    subgraph think["Thinking attempt"]
+        t1["POST /chat/completions<br/>chat_template_kwargs.enable_thinking = true<br/>temperature 0.6, top_p 0.95, top_k 20<br/>max_tokens 3000<br/>timeout = min(LLM_TIMEOUT_SECONDS, LLM_THINKING_TIMEOUT_SECONDS)<br/>= 60 s with default settings"]
+        t2["strip <think>...</think> blocks<br/>'<think>' still present = cut off = treated as empty"]
+        t3{"usable, non-empty answer?"}
+        t1 --> t2 --> t3
+    end
+
+    subgraph fast["Fast attempt"]
+        f1["POST /chat/completions<br/>enable_thinking = false<br/>temperature 0.0, max_tokens 700<br/>timeout LLM_TIMEOUT_SECONDS (60 s)"]
+        f2["strip think blocks, reject empty"]
+        f1 --> f2
+    end
+
+    ok["return stripped answer"]
+    err["LLMServiceError<br/>HTTP error, invalid JSON, unexpected shape, or empty answer<br/>chat route returns 503, nothing persisted"]
+
+    gen --> mode
+    mode -->|"never"| never --> f1
+    mode -->|"always"| always --> isans
+    mode -->|"auto"| auto --> isans
+    isans -->|"no"| f1
+    isans -->|"yes, always"| t1
+    isans -->|"yes, auto"| heur
+    heur -->|"no"| f1
+    heur -->|"yes"| t1
+    t3 -->|"yes"| ok
+    t3 -->|"no, or LLMServiceError"| f1
+    f2 -->|"ok"| ok
+    f1 -.->|"error"| err
+
+    note["Worst case for one answer: about 60 s thinking + 60 s fast.<br/>Effective thinking timeout is capped by LLM_TIMEOUT_SECONDS,<br/>so raising LLM_THINKING_TIMEOUT_SECONDS alone has no effect above 60 s.<br/>chat_template_kwargs is llama.cpp / Qwen3 specific."]
+    ok ~~~ note
+    classDef note fill:#fff,stroke:#999,stroke-dasharray: 4 4,color:#555
+    class note note

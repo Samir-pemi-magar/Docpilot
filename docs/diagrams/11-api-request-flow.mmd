@@ -1,4 +1,5 @@
 %% DocPilot - API boundaries and request flow (FastAPI dependency injection)
+%% Changes vs. previous version: evaluation session factory + background evaluation tasks.
 flowchart LR
     client["Browser SPA<br/>fetch with Bearer token<br/>base /api"]
     proxy["Vite dev proxy<br/>/api -> backend, strips prefix<br/>no CORS middleware in backend"]
@@ -21,7 +22,7 @@ flowchart LR
         m3["POST .../search"]
         m4["POST .../chat"]
         m5["GET, DELETE .../conversations (own only)"]
-        m6["all /evaluation-datasets endpoints<br/>datasets, cases, import, runs, results"]
+        m6["all /evaluation-datasets endpoints<br/>datasets, cases, import,<br/>POST runs (async, returns pending),<br/>GET run + results"]
     end
 
     subgraph adm["Owner or admin (require_organization_roles)"]
@@ -44,6 +45,7 @@ flowchart LR
         ge["get_embedding_provider<br/>app.state or cached BGE-M3"]
         gl["get_llm_client / get_evaluation_llm_client<br/>OpenAICompatibleLLMClient"]
         gi["get_document_ingestion_task"]
+        gf["get_evaluation_session_factory<br/>AsyncSessionLocal for background runs"]
         dbs --> cu --> oa --> rr
     end
 
@@ -52,7 +54,7 @@ flowchart LR
         pg[("PostgreSQL")]
         fs[("Local files")]
         llm["LLM server"]
-        bg["BackgroundTasks<br/>ingestion"]
+        bg["BackgroundTasks<br/>1. document ingestion<br/>2. evaluation runs"]
     end
 
     client --> proxy
@@ -67,6 +69,7 @@ flowchart LR
     own --> rr
     orgm --> ge
     orgm --> gl
+    m6 --> gf
     adm --> gs
     adm --> gi
     m2 --> gs
@@ -75,4 +78,6 @@ flowchart LR
     sv --> fs
     sv --> llm
     gi --> bg
+    gf --> bg
     bg --> pg
+    bg --> llm

@@ -1,31 +1,31 @@
 %% DocPilot - System Context (C4 level 1 style)
+%% Re-verified against the repository (see docs/DOC_AUDIT.md).
 %% Solid = verified in code/config. Dashed = configurable or unverified.
 flowchart LR
-    member["Organization member<br/>role: member<br/>read docs, search, chat,<br/>evaluations"]
+    member["Organization member<br/>role: member<br/>read docs, search, chat,<br/>conversations, evaluations"]
     admin["Organization admin / owner<br/>upload and delete documents,<br/>manage members"]
 
     subgraph docpilot["DocPilot system boundary"]
-        spa["Web UI<br/>React SPA, Vite"]
-        api["DocPilot API<br/>FastAPI, single process<br/>also runs ingestion and<br/>BGE-M3 embeddings in-process"]
+        spa["Web UI<br/>React 19 + Vite SPA<br/>chat, conversation history,<br/>file manager, eval dashboard"]
+        api["DocPilot API<br/>FastAPI, single process<br/>also runs ingestion, evaluation runs<br/>and BGE-M3 embeddings in-process"]
         db[("PostgreSQL 17 + pgvector<br/>relational data, vectors,<br/>full-text index")]
         fs[("Local filesystem<br/>data/storage<br/>original uploaded files")]
     end
 
-    llm["llama.cpp server<br/>OpenAI-compatible /v1/chat/completions<br/>model: Qwen3-1.7B GGUF<br/>provisioned in compose.yaml"]
-    hf["Hugging Face Hub<br/>model weights download<br/>UNVERIFIED: inferred from<br/>-hf flag and FlagEmbedding"]
+    llm["llama.cpp server (CUDA image)<br/>OpenAI-compatible /v1/chat/completions<br/>model: Qwen3-8B Q4_K_M GGUF<br/>loaded from ./data/local_models<br/>provisioned in compose.yaml"]
+    hf["Hugging Face Hub<br/>BGE-M3 weights download on first use<br/>UNVERIFIED: inferred from FlagEmbedding,<br/>cache location not configured by repo"]
     other["Any other OpenAI-compatible LLM endpoint<br/>possible via LLM_BASE_URL setting<br/>not deployed by this repo"]
 
-    member -->|"HTTPS/HTTP, JWT bearer"| spa
-    admin -->|"HTTPS/HTTP, JWT bearer"| spa
+    member -->|"HTTP, JWT bearer"| spa
+    admin -->|"HTTP, JWT bearer"| spa
     spa -->|"REST via /api proxy"| api
     api -->|"SQL over asyncpg"| db
     api -->|"read/write files"| fs
-    api -->|"HTTP JSON"| llm
-    llm -.->|"model download at first start"| hf
+    api -->|"HTTP JSON<br/>adaptive thinking mode"| llm
     api -.->|"BGE-M3 weights download"| hf
     api -.->|"configurable"| other
 
-    notimpl["NOT PRESENT in repository:<br/>SSO/OAuth, email invitations,<br/>external object storage,<br/>separate vector database,<br/>separate worker/queue"]
+    notimpl["NOT PRESENT in repository:<br/>SSO/OAuth, email invitations,<br/>external object storage,<br/>separate vector database,<br/>separate worker/queue, streaming responses"]
     docpilot ~~~ notimpl
 
     classDef missing fill:#fff,stroke:#999,stroke-dasharray: 4 4,color:#555

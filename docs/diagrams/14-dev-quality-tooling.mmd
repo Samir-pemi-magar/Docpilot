@@ -1,0 +1,51 @@
+%% DocPilot - Development and quality tooling  [NEW diagram]
+%% How the repo checks itself: pytest tiers, offline retrieval benchmark, answer benchmark,
+%% and the in-app evaluation dashboard. Nothing here runs in CI (no CI config in the archive).
+flowchart TB
+    subgraph corpus["Test corpus (insurance, fictional 'Everest Sunrise Insurance')"]
+        docs9["9 source documents DOC-01..DOC-09<br/>PDF, DOCX, XLSX, TXT"]
+        q20["chat_questions_20.txt<br/>20 manual chat questions with 'good answer' notes"]
+        jsonl["evaluation_cases.jsonl<br/>60 labeled cases, 8 categories:<br/>direct_factual, exception_conditional, cross_document,<br/>numerical, spreadsheet, unanswerable,<br/>false_assumption, historical_version"]
+        rc["retrieval_cases.json + retrieval_cases_chat.json<br/>question + 'needles' (text that must reach the model)"]
+    end
+
+    subgraph pytest["pytest (make test / make check)"]
+        direction TB
+        unit["unit tests: parsers, normalization, chunking,<br/>embeddings (fakes), llm client (mock transport)"]
+        integ["API / DB tests: auth, authorization, isolation,<br/>documents, search, chat, evaluations<br/>need Postgres on localhost:5433,<br/>database docpilot_test (forced in conftest.py)"]
+        real["opt-in real-model tests (skipped by default)<br/>RUN_REAL_BGE_TEST, RUN_REAL_RAG_CHAT,<br/>RUN_REAL_UPLOAD_RAG, RUN_REAL_WORKER_TEST"]
+    end
+
+    subgraph scripts["Root-level scripts (run with CUDA_VISIBLE_DEVICES= uv run python ...)"]
+        direction TB
+        probe["probe_retrieval.py<br/>which chunks are retrieved, is the answer chunk among them"]
+        brm["bench_retrieval.py<br/>no LLM; compares KEYWORD_OR_WEIGHT settings<br/>(off, 1.0, 0.5, 0.25, 0.10);<br/>checks needles in chunks AND in built context"]
+        bra["bench_answers.py<br/>prompt variants A/B/C, --repeat, --thinking,<br/>--app = through the app's own LLM client;<br/>auto-grades against document text"]
+        smoke["backend/bge_m3_smoke.py, bge_m3_similarity.py<br/>embedding sanity checks"]
+        patches["apply_chat_fix.py, apply_config.py<br/>one-off patch scripts, ALREADY APPLIED<br/>(safe to delete)"]
+    end
+
+    subgraph app["Running application"]
+        ui["Eval dashboard (SPA)<br/>import JSONL, map DOC-xx labels to uploaded documents,<br/>run, view metrics and per-case results"]
+        retr["services/retrieval.py"]
+        chatctx["chat._build_retrieved_context"]
+        llmc["services/llm.py"]
+    end
+
+    note["Org id 'd209210b-...' is hard-coded as the default in<br/>probe_retrieval.py, bench_retrieval.py and bench_answers.py.<br/>Pass your own workspace id."]
+
+    docs9 -->|"uploaded through UI"| app
+    jsonl --> ui
+    q20 -.->|"asked by hand in chat"| app
+    rc --> probe
+    rc --> brm
+    q20 -.-> bra
+    probe --> retr
+    brm --> retr
+    brm --> chatctx
+    bra --> retr
+    bra --> chatctx
+    bra --> llmc
+    scripts ~~~ note
+    classDef note fill:#fff,stroke:#999,stroke-dasharray: 4 4,color:#555
+    class note,patches note

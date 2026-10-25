@@ -1,8 +1,10 @@
 %% DocPilot - Backend components (backend/app), arrows = real import/call dependencies
+%% Changes vs. previous version: evaluation background runner + session factory,
+%% llm settings, DOCX/XLSX parser notes.
 flowchart LR
-    main["main.py<br/>creates app, includes routers"]
+    main["main.py<br/>creates app, includes 9 routers"]
     lifespan["core/lifespan.py<br/>sets app.state.storage<br/>(get_storage does not read it)"]
-    config["core/config.py<br/>Settings"]
+    config["core/config.py<br/>Settings (incl. llm_thinking_*)"]
 
     subgraph routes["api/routes + auth/routes"]
         r_auth["auth/routes<br/>register, login, me, delete me"]
@@ -11,7 +13,7 @@ flowchart LR
         r_search["search"]
         r_chat["chat<br/>routing, rewrite, context,<br/>guard, persistence inline"]
         r_conv["conversations<br/>queries models directly"]
-        r_eval["evaluations"]
+        r_eval["evaluations<br/>start_evaluation_run schedules<br/>a background task"]
         r_misc["health, version"]
     end
 
@@ -20,27 +22,27 @@ flowchart LR
         d_auth["auth/dependencies<br/>get_current_user"]
         d_authz["auth/authorization<br/>get_organization_access,<br/>require_organization_roles"]
         d_emb["embeddings/dependencies<br/>get_embedding_provider"]
-        d_db["db/session<br/>get_db_session"]
+        d_db["db/session<br/>get_db_session,<br/>get_evaluation_session_factory"]
     end
 
     subgraph services["services"]
         s_doc["document"]
         s_org["organization"]
         s_mem["membership"]
-        s_ret["retrieval"]
-        s_llm["llm"]
+        s_ret["retrieval<br/>vector + keyword + OR-keyword, RRF"]
+        s_llm["llm<br/>thinking-mode client"]
         s_ing["ingestion"]
         s_task["ingestion_task"]
         s_chunk["chunk"]
         s_embed["embedding"]
         s_eval["evaluations<br/>CRUD, import"]
-        s_run["evaluation_runner"]
+        s_run["evaluation_runner<br/>run_evaluation,<br/>run_evaluation_background"]
     end
 
     subgraph processing["processing"]
         p_fac["factory"]
         p_pipe["pipeline"]
-        parsers["parsers<br/>pdf, docx, xlsx, txt, md"]
+        parsers["parsers<br/>pdf, docx (with tables),<br/>xlsx (cached formula values), txt, md"]
         norm["normalization"]
         chunking["chunking<br/>prose, structured, hybrid"]
     end
@@ -80,6 +82,7 @@ flowchart LR
     r_eval --> s_eval
     r_eval --> s_run
     r_eval --> d_emb
+    r_eval --> d_db
     s_run --> s_ret
     s_run --> s_llm
 

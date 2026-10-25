@@ -1,19 +1,21 @@
 %% DocPilot - High-level logical architecture
+%% Changes vs. previous version: conversation sidebar, evaluation runs as background tasks,
+%% adaptive-thinking LLM client, Qwen3-8B.
 flowchart TB
     subgraph client["Client"]
-        spa["React SPA<br/>pages: Chat, Files, Eval dashboard<br/>token in localStorage"]
+        spa["React SPA<br/>login / org picker<br/>pages: Chat, Eval dashboard, File manager<br/>sidebar: conversation history<br/>token in localStorage"]
     end
 
     subgraph backend["FastAPI process (uvicorn)"]
         direction TB
         routes["API routers<br/>auth, organizations, documents,<br/>search, chat, conversations,<br/>evaluation-datasets, health, version"]
         authz["Auth and authorization<br/>JWT, org membership, roles"]
-        svc["Services<br/>document, organization, membership,<br/>retrieval, ingestion, evaluations, llm"]
-        proc["Document processing<br/>parsers, normalizers, hybrid chunker"]
-        emb["Embedding provider<br/>BGE-M3 local, 1024-d dense"]
-        bg["FastAPI BackgroundTasks<br/>ingestion runs after response"]
+        svc["Services<br/>document, organization, membership,<br/>retrieval, ingestion, evaluations, evaluation_runner"]
+        proc["Document processing<br/>parsers (tables from PDF, DOCX, XLSX),<br/>normalizers, hybrid chunker"]
+        emb["Embedding provider<br/>BGE-M3 local, 1024-d dense<br/>(CPU under make dev)"]
+        bg["FastAPI BackgroundTasks<br/>1. document ingestion<br/>2. evaluation runs<br/>run after the HTTP response"]
         stor["StorageService abstraction<br/>LocalStorage implementation"]
-        llmc["OpenAICompatibleLLMClient<br/>httpx"]
+        llmc["OpenAICompatibleLLMClient (httpx)<br/>fast mode (temp 0) or thinking mode<br/>for numeric / date / eligibility questions,<br/>falls back to fast mode"]
     end
 
     subgraph data["Data stores"]
@@ -21,17 +23,18 @@ flowchart TB
         files[("Local filesystem")]
     end
 
-    llmsrv["llama.cpp server<br/>Qwen3-1.7B"]
+    llmsrv["llama.cpp server<br/>Qwen3-8B Q4_K_M"]
 
-    spa -->|"REST JSON / multipart"| routes
+    spa -->|"REST JSON / multipart<br/>polls run status"| routes
     routes --> authz
     routes --> svc
     routes --> llmc
     routes --> emb
-    routes -->|"upload accepted"| bg
+    routes -->|"upload accepted / run created"| bg
     bg --> svc
     svc --> proc
     svc --> emb
+    svc --> llmc
     svc --> stor
     svc -->|"SQLAlchemy async"| pg
     stor --> files

@@ -1,9 +1,10 @@
 %% DocPilot - Evaluation architecture and metrics
-%% Runs execute synchronously inside POST .../evaluation-datasets/{id}/runs.
+%% CHANGED: runs now execute as a FastAPI BackgroundTask. POST .../runs returns 201 with
+%% status = pending; the UI polls the run every 800 ms until it is completed or failed.
 flowchart TD
     subgraph author["Dataset authoring (any org member)"]
         ds["evaluation_datasets<br/>org scoped"]
-        imp["JSONL import<br/>max 2,000 lines, all-or-nothing<br/>question required<br/>reference_answer or expected_answer<br/>relevant_document_ids: UUIDs or labels<br/>mapped via document_id_mapping<br/>case_id unique per dataset<br/>full record kept in case metadata"]
+        imp["JSONL import<br/>max 2,000 lines, all-or-nothing<br/>question required<br/>reference_answer or expected_answer<br/>relevant_document_ids: UUIDs or labels<br/>mapped via document_id_mapping<br/>(UI: map each label to an uploaded document)<br/>case_id unique per dataset<br/>full record kept in case metadata"]
         man["manual case create / update / delete<br/>delete all cases"]
         cases["evaluation_cases<br/>question, reference_answer,<br/>relevant_document_ids, metadata"]
         val["relevant document UUIDs must<br/>belong to the same organization (422)"]
@@ -13,15 +14,17 @@ flowchart TD
     end
 
     start["POST /evaluation-datasets/ID/runs {top_k 1..100}"]
-    run["INSERT evaluation_runs status = running, commit"]
+    run["INSERT evaluation_runs status = pending, commit<br/>respond 201 immediately"]
+    bgt["background_tasks.add_task<br/>run_evaluation_background<br/>own DB session from get_evaluation_session_factory"]
+    ui_poll["SPA polls GET .../runs/ID every 800 ms<br/>shows 'Queued' (pending) or 'In progress' (running),<br/>then loads results"]
 
-    subgraph per["For each case in position order (sequential)"]
+    subgraph per["run_evaluation: status = running; for each case in position order (sequential)"]
         direction TB
         e1["embed_query (BGE-M3)"]
         e2["retrieve_hybrid_chunks (same retrieval as chat)"]
         e3{"any sources?"}
         e4["answer = fixed no-sources text<br/>(LLM skipped)"]
-        e5["evaluation prompt: question +<br/>excerpts truncated to 3,000 chars<br/>-> LLM generate"]
+        e5["evaluation prompt: question +<br/>excerpts truncated to 3,000 chars<br/>-> LLM generate<br/>(same client: thinking mode can apply)"]
         m1["retrieval metrics (document level)<br/>only if relevant_document_ids set"]
         m2["answer metrics (lexical)<br/>only if labels in case metadata"]
         r1["INSERT evaluation_results, commit per case<br/>snapshots of question, reference answer,<br/>metadata, sources, answer, metrics, duration_ms"]
@@ -35,10 +38,12 @@ flowchart TD
         x1 --> r1
     end
 
-    agg["Aggregate: arithmetic mean over completed cases that have the label<br/>stored in evaluation_runs.metrics with top_k and evaluated-case counts<br/>run.status = completed (or failed on unexpected run-level error)"]
+    agg["Aggregate: arithmetic mean over completed cases that have the label<br/>stored in evaluation_runs.metrics with top_k and evaluated-case counts<br/>run.status = completed<br/>unexpected run-level error: run.status = failed + error_message"]
     ui["GET runs, run, results (filter failures, limit/offset)<br/>consumed by Eval dashboard"]
 
-    cases --> start --> run --> per --> agg --> ui
+    cases --> start --> run --> bgt --> per --> agg --> ui
+    run --> ui_poll
+    ui_poll -.-> agg
 
     subgraph metrics["Implemented metrics"]
         direction TB
@@ -50,7 +55,7 @@ flowchart TD
     end
     agg ~~~ metrics
 
-    notimpl["NOT IMPLEMENTED: LLM-as-judge, semantic answer similarity,<br/>faithfulness/groundedness, precision@k, nDCG, background execution.<br/>reference_answer is stored and snapshotted but not used by any metric.<br/>Evaluation uses its own prompt and context size, not the chat router logic."]
+    notimpl["NOT IMPLEMENTED: LLM-as-judge, semantic answer similarity,<br/>faithfulness/groundedness, precision@k, nDCG, job queue / separate worker,<br/>crash recovery for runs left in pending/running.<br/>reference_answer is stored and snapshotted but not used by any metric.<br/>Evaluation uses its own prompt and context size, not the chat router logic."]
     metrics ~~~ notimpl
     classDef note fill:#fff,stroke:#999,stroke-dasharray: 4 4,color:#555
     class notimpl note

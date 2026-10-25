@@ -1,24 +1,27 @@
 %% DocPilot - Deployment and infrastructure as evidenced by compose.yaml, Makefile, config
 %% Only a development topology exists in the repository. No production deployment config was found.
+%% CHANGED: LLM is Qwen3-8B Q4_K_M loaded from a LOCAL file (not auto-downloaded), ctx 8192, --parallel 1;
+%% backend runs with CUDA_VISIBLE_DEVICES empty (embeddings on CPU); new LLM_THINKING_* / LLM_MAX_TOKENS settings.
 flowchart TB
     dev["Developer machine / host OS<br/>make dev orchestrates everything below"]
 
     subgraph host["Host processes (not containerized, no Dockerfile in repo)"]
         vite["Vite dev server<br/>make dev: 127.0.0.1:5173<br/>(vite.config default: PORT or 8443)<br/>proxies /api -> http://127.0.0.1:8000"]
-        uv["uvicorn app.main:app --reload<br/>127.0.0.1:8000<br/>runs: FastAPI routers,<br/>BackgroundTasks ingestion,<br/>BGE-M3 via FlagEmbedding / PyTorch,<br/>LocalStorage"]
+        uv["uvicorn app.main:app --reload<br/>127.0.0.1:8000, started with CUDA_VISIBLE_DEVICES=<br/>(GPU hidden: keeps VRAM for the LLM, BGE-M3 runs on CPU)<br/>runs: FastAPI routers,<br/>BackgroundTasks (ingestion + evaluation runs),<br/>BGE-M3 via FlagEmbedding / PyTorch,<br/>LocalStorage"]
         fsd[("data/storage<br/>STORAGE_PATH, default under project root")]
         models[("BGE-M3 weights<br/>Hugging Face cache<br/>location not configured by repo")]
+        gguf[("data/local_models/Qwen3-8B-Q4_K_M.gguf<br/>must be placed here by the developer<br/>(data/ is git-ignored)")]
     end
 
     subgraph compose["Docker Compose (compose.yaml)"]
         pgc["postgres<br/>image pgvector/pgvector:pg17<br/>host 5433 -> container 5432<br/>named volume docpilot_postgres_data<br/>healthcheck pg_isready<br/>dev credentials in file"]
-        llc["llama-server (optional in make dev)<br/>image ghcr.io/ggml-org/llama.cpp:server-cuda<br/>host 3000 -> container 8080<br/>model ggml-org/Qwen3-1.7B-GGUF Q4_K_M via -hf<br/>alias docpilot-qwen3-1.7b, ctx 4096, ngl 99<br/>NVIDIA GPU reservation, restart unless-stopped<br/>cache bind mount ./data/models/llama.cpp"]
+        llc["llama-server (optional in make dev)<br/>image ghcr.io/ggml-org/llama.cpp:server-cuda<br/>host 3000 -> container 8080<br/>-m /models/Qwen3-8B-Q4_K_M.gguf<br/>--alias docpilot-qwen3-4b (name does not match the 8B file)<br/>ctx 8192, ngl 99, parallel 1<br/>NVIDIA GPU reservation, restart unless-stopped<br/>mounts ./data/local_models -> /models,<br/>./data/models/llama.cpp -> /root/.cache"]
     end
 
-    cfg["Configuration<br/>.env at project root read by pydantic-settings<br/>required: DATABASE_URL, JWT_SECRET_KEY<br/>optional: STORAGE_PATH, LLM_BASE_URL (default http://127.0.0.1:3000/v1),<br/>LLM_API_KEY, LLM_MODEL, LLM_TIMEOUT_SECONDS,<br/>ACCESS_TOKEN_EXPIRE_MINUTES, APP_NAME, ENVIRONMENT, DEBUG"]
+    cfg["Configuration<br/>.env at project root read by pydantic-settings<br/>required: DATABASE_URL, JWT_SECRET_KEY<br/>optional: STORAGE_PATH, ACCESS_TOKEN_EXPIRE_MINUTES, APP_NAME, ENVIRONMENT, DEBUG,<br/>LLM_BASE_URL (default http://127.0.0.1:3000/v1), LLM_API_KEY,<br/>LLM_MODEL (default docpilot-qwen3-4b), LLM_TIMEOUT_SECONDS (60),<br/>LLM_THINKING_MODE (auto|always|never), LLM_THINKING_TIMEOUT_SECONDS (75),<br/>LLM_THINKING_MAX_TOKENS (3000), LLM_THINKING_TEMPERATURE (0.6), LLM_MAX_TOKENS (700)"]
     alem["Alembic migrations<br/>make migrate: uv run alembic upgrade head<br/>manual step, not run at app startup"]
 
-    hf["Hugging Face Hub (external)<br/>UNVERIFIED but implied for model downloads"]
+    hf["Hugging Face Hub (external)<br/>UNVERIFIED but implied for BGE-M3 download"]
     browser["Browser"]
 
     dev --> vite
@@ -31,7 +34,7 @@ flowchart TB
     uv -->|"file I/O"| fsd
     uv -->|"HTTP localhost:3000/v1"| llc
     uv --- models
-    llc -.->|"first start"| hf
+    llc --- gguf
     models -.->|"first use"| hf
     cfg -.-> uv
     alem -.->|"schema"| pgc
