@@ -1,5 +1,5 @@
 %% DocPilot - System Context (C4 level 1 style)
-%% Re-verified against the repository (see docs/DOC_AUDIT.md).
+%% Updated for the Gmail integration. Re-verified against the repository (see docs/DOC_AUDIT.md).
 %% Solid = verified in code/config. Dashed = configurable or unverified.
 flowchart LR
     member["Organization member<br/>role: member<br/>read docs, search, chat,<br/>conversations, evaluations"]
@@ -14,6 +14,7 @@ flowchart LR
 
     llm["llama.cpp server (CUDA image)<br/>OpenAI-compatible /v1/chat/completions<br/>model: Qwen3-8B Q4_K_M GGUF<br/>loaded from ./data/local_models<br/>provisioned in compose.yaml"]
     hf["Hugging Face Hub<br/>BGE-M3 weights download on first use<br/>UNVERIFIED: inferred from FlagEmbedding,<br/>cache location not configured by repo"]
+    google["Google (external, optional)<br/>OAuth 2.0 consent + token endpoints<br/>Gmail API, gmail.readonly scope<br/>used only when GMAIL_* settings are configured"]
     other["Any other OpenAI-compatible LLM endpoint<br/>possible via LLM_BASE_URL setting<br/>not deployed by this repo"]
 
     member -->|"HTTP, JWT bearer"| spa
@@ -24,9 +25,11 @@ flowchart LR
     api -->|"HTTP JSON<br/>adaptive thinking mode"| llm
     api -.->|"BGE-M3 weights download"| hf
     api -.->|"configurable"| other
+    api -.->|"HTTPS: token exchange,<br/>list / read messages"| google
+    spa -.->|"browser redirect to Google consent,<br/>then back to /gmail/oauth/callback"| google
 
-    notimpl["Not implemented:<br/>general-purpose SSO, email invitations,<br/>external object storage,<br/>separate vector database,<br/>separate worker/queue, streaming responses.<br/>Gmail OAuth is implemented for read-only access."]
+    notimpl["Not implemented:<br/>general-purpose SSO, email invitations,<br/>external object storage,<br/>separate vector database,<br/>separate worker/queue, streaming responses.<br/>Gmail OAuth is implemented for read-only import only."]
     docpilot ~~~ notimpl
 
     classDef missing fill:#fff,stroke:#999,stroke-dasharray: 4 4,color:#555
-    class notimpl,hf,other missing
+    class notimpl,hf,other,google missing

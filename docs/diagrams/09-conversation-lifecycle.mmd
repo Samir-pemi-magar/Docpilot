@@ -1,5 +1,5 @@
 %% DocPilot - Conversation lifecycle and ownership rules
-%% Re-verified (this pass): spot-checked conversation routes and ordering; unchanged. The SPA now exposes list/open/delete in a sidebar.
+%% Updated: answer PDF export added. The SPA exposes list/open/delete in a sidebar and a Download PDF button per answer.
 %% Conversations are created only as a side effect of POST /chat. There is no
 %% create, rename or update endpoint. All access requires membership AND ownership.
 flowchart TD
@@ -37,6 +37,7 @@ flowchart TD
         lst["GET /conversations<br/>limit 1..100, offset, newest updated first<br/>includes message_count"]
         get["GET /conversations/ID<br/>messages ordered created_at asc,<br/>role desc, id asc (user before assistant)"]
         del["DELETE /conversations/ID<br/>204, messages cascade"]
+        pdf["GET /conversations/ID/messages/MSG/pdf<br/>owner only, assistant messages only (else 404)<br/>question = nearest earlier user message<br/>ReportLab PDF with answer + saved sources<br/>Cache-Control: no-store"]
     end
     resp ~~~ read
 

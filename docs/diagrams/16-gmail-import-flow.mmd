@@ -1,0 +1,52 @@
+%% DocPilot - Gmail message and attachment import  [NEW]
+%% POST /organizations/{org}/gmail/messages/{message_id}/import  (owner or admin)
+flowchart TD
+    list["GET .../gmail/messages (any member, own connection)<br/>max 20 per page, page_token paging<br/>returns id, thread id, from, subject, date, snippet<br/>(metadata only, bodies are not read)"]
+    start["POST .../messages/ID/import<br/>owner or admin only"]
+    v1{"message id valid? (422)<br/>active connection? (404)<br/>scope is exactly gmail.readonly? (403)"}
+    dup{"gmail_imports row already exists<br/>for this connection + message<br/>(ANY status)?"}
+    e409["409 already imported or attempted<br/>(a failed import cannot be retried through the API)"]
+    fetch["decrypt refresh token, get access token,<br/>fetch the full message<br/>502 if Google fails or returns a different message<br/>401 + status = reauth_required if the grant is revoked"]
+    body["body = text/plain parts,<br/>else HTML converted to plain text<br/>content = Subject / From / Date + body"]
+    size{"content over 1,000,000 bytes?"}
+    e413["413 exceeds the 1 MB import limit"]
+    rec["INSERT gmail_imports status = pending"]
+    doc["create_document: name 'Gmail: SUBJECT' (max 200),<br/>file gmail-UUID.txt, text/plain<br/>status = imported, document_id set<br/>failure: status = failed + 500"]
+    att["attachments (a failure never fails the email import)"]
+    ing["background ingestion task for the email document<br/>(same pipeline as an upload, diagram 04)"]
+    out["201 Created"]
+
+    subgraph attach["Attachment rules (each tracked in gmail_import_attachments)"]
+        direction TB
+        a1["consider at most the first 50 attachments"]
+        a2{"safe filename? not inline?<br/>extension .pdf .docx .xlsx .txt .md .markdown?"}
+        sk1["status = skipped, with a reason:<br/>unsafe filename, inline, unsupported type"]
+        a3{"reported size at most 10 MiB?<br/>fewer than 10 downloaded?<br/>running total at most 25 MiB?"}
+        sk2["status = skipped, with a reason:<br/>size or count limit"]
+        a4["download from Gmail (max 10 MiB)<br/>PDF must start with %PDF-"]
+        a5["create_document (original filename)<br/>status = imported<br/>background ingestion task per attachment"]
+        f1["any error: status = failed + message"]
+        a1 --> a2
+        a2 -->|"no"| sk1
+        a2 -->|"yes"| a3
+        a3 -->|"no"| sk2
+        a3 -->|"yes"| a4 --> a5
+        a4 -.-> f1
+    end
+
+    list -.->|"user picks messages in the Gmail page"| start
+    start --> v1
+    v1 -->|"fail"| errs["4xx / 5xx error"]
+    v1 -->|"ok"| dup
+    dup -->|"yes"| e409
+    dup -->|"no"| fetch --> body --> size
+    size -->|"yes"| e413
+    size -->|"no"| rec --> doc --> att --> attach
+    doc --> ing
+    attach --> out
+    ing --> out
+
+    org["Result: the email and its attachments are ordinary ORGANIZATION documents.<br/>Every member can search, chat over and cite them, and admins can delete them.<br/>The Gmail page does not check the user's role, so members see a 403 per message."]
+    out ~~~ org
+    classDef note fill:#fff,stroke:#999,stroke-dasharray: 4 4,color:#555
+    class org note

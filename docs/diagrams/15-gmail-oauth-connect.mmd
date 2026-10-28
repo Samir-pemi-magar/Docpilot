@@ -1,0 +1,40 @@
+%% DocPilot - Gmail OAuth connect flow  [NEW]
+%% Read-only (gmail.readonly). One connection per (user, organization).
+%% The callback has no JWT: identity comes from a one-time, hashed, 10-minute state value.
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant FE as React SPA (Gmail page)
+    participant API as DocPilot API
+    participant DB as PostgreSQL
+    participant G as Google
+
+    U->>FE: click Connect Gmail
+    FE->>API: POST /organizations/ORG/gmail/oauth/start (JWT, any member)
+    alt GMAIL_CLIENT_ID or GMAIL_REDIRECT_URI missing
+        API-->>FE: 503 Gmail OAuth is not configured
+    else configured
+        API->>DB: INSERT gmail_oauth_states (SHA-256 of random state, user, org, expires in 10 min)
+        API-->>FE: authorization_url (scope gmail.readonly, access_type offline, prompt consent)
+        FE->>FE: remember organization id in sessionStorage
+        FE->>G: browser redirect to Google consent screen
+        U->>G: approve read-only access
+        G->>API: GET /gmail/oauth/callback?code=...&state=... (browser redirect, no JWT)
+        API->>DB: UPDATE gmail_oauth_states SET consumed_at WHERE unconsumed AND not expired RETURNING user, org
+        alt state invalid, expired or already used
+            API-->>U: 400 Invalid or expired Gmail authorization state
+        else user denied access (error parameter)
+            API-->>U: 303 redirect to FRONTEND_URL/?gmail=cancelled
+        else code present
+            API->>G: exchange code for tokens (httpx, 15 s timeout)
+            G-->>API: refresh token, scopes, Google email
+            Note over API: 502 if Google fails. 400 if a NEW connection gets no refresh token.
+            API->>API: Fernet-encrypt refresh token (503 if GMAIL_TOKEN_ENCRYPTION_KEY missing)
+            API->>DB: upsert gmail_connections (UNIQUE user + org), status = active
+            API-->>U: 303 redirect to FRONTEND_URL/?gmail=connected&organization_id=ORG
+            U->>FE: SPA reads the query string, shows a notice, opens the Gmail page, cleans the URL
+        end
+    end
+
+    Note over API,G: Later calls: decrypt the stored refresh token, ask Google for a short-lived access token (never stored), then call the Gmail API. If Google says the grant is revoked or expired, status becomes reauth_required and the API returns 401.
+    Note over API,DB: Not present: a disconnect endpoint, token revocation at Google, cleanup of expired oauth state rows.

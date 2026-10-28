@@ -1,10 +1,12 @@
 %% DocPilot - Document ingestion pipeline
 %% ingestion_status values (DB check constraint): pending, processing, completed, failed
-%% Changes vs. previous version: DOCX tables ARE extracted; XLSX uses saved formula results.
+%% Changes vs. previous version: DOCX tables ARE extracted; XLSX uses saved formula results;
+%% Gmail imports are a second entry point into the same create_document + ingestion task.
 flowchart TD
     up["POST /organizations/{org}/documents<br/>or POST .../documents/{id}/versions<br/>requires role owner or admin<br/>multipart: name + file"]
     chk{"filename present?"}
     err400["400 A filename is required"]
+    gmup["POST .../gmail/messages/ID/import (owner or admin)<br/>email text saved as gmail-UUID.txt,<br/>supported attachments saved under their own names<br/>(see diagram 16)"]
 
     subgraph sync["Synchronous part (inside the HTTP request)"]
         direction TB
@@ -57,6 +59,7 @@ flowchart TD
     up --> chk
     chk -->|"no"| err400
     chk -->|"yes"| sync
+    gmup -->|"same create_document, same background ingestion task"| sync
     sync --> resp
     sync --> bgq --> async
 

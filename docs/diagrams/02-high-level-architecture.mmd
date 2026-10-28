@@ -1,20 +1,22 @@
 %% DocPilot - High-level logical architecture
-%% Changes vs. previous version: conversation sidebar, evaluation runs as background tasks,
-%% adaptive-thinking LLM client, Qwen3-8B.
+%% Changes vs. previous version: Gmail integration, PDF export, refresh tokens,
+%% single active evaluation run. (Earlier: adaptive-thinking client, Qwen3-8B, background evaluation.)
 flowchart TB
     subgraph client["Client"]
-        spa["React SPA<br/>login / org picker<br/>pages: Chat, Eval dashboard, File manager<br/>sidebar: conversation history<br/>token in localStorage"]
+        spa["React SPA<br/>login / org picker<br/>pages: Chat, Eval dashboard, File manager, Gmail<br/>sidebar: conversation history<br/>access + refresh tokens in localStorage,<br/>silent refresh on 401"]
     end
 
     subgraph backend["FastAPI process (uvicorn)"]
         direction TB
-        routes["API routers<br/>auth, organizations, documents,<br/>search, chat, conversations,<br/>evaluation-datasets, health, version"]
-        authz["Auth and authorization<br/>JWT, org membership, roles"]
+        routes["API routers (11 instances)<br/>auth (incl. /auth/refresh), organizations, documents,<br/>search, chat, conversations (+ answer PDF),<br/>evaluation-datasets (+ run PDF), gmail (+ OAuth callback),<br/>health, version"]
+        authz["Auth and authorization<br/>access + refresh JWT (token_type claim),<br/>org membership, roles"]
         svc["Services<br/>document, organization, membership,<br/>retrieval, ingestion, evaluations, evaluation_runner"]
         proc["Document processing<br/>parsers (tables from PDF, DOCX, XLSX),<br/>normalizers, hybrid chunker"]
         emb["Embedding provider<br/>BGE-M3 local, 1024-d dense<br/>(CPU under make dev)"]
-        bg["FastAPI BackgroundTasks<br/>1. document ingestion<br/>2. evaluation runs<br/>run after the HTTP response"]
+        bg["FastAPI BackgroundTasks<br/>1. document ingestion (uploads and Gmail imports)<br/>2. evaluation runs (one active run at a time)<br/>run after the HTTP response"]
         stor["StorageService abstraction<br/>LocalStorage implementation"]
+        gm["Gmail services<br/>one-time OAuth state, Fernet token encryption,<br/>Google client (httpx), read-only list + import"]
+        pdf["PDF export (ReportLab)<br/>chat answers, evaluation reports"]
         llmc["OpenAICompatibleLLMClient (httpx)<br/>fast mode (temp 0) or thinking mode<br/>for numeric / date / eligibility questions,<br/>falls back to fast mode"]
     end
 
@@ -24,12 +26,15 @@ flowchart TB
     end
 
     llmsrv["llama.cpp server<br/>Qwen3-8B Q4_K_M"]
+    google["Google OAuth + Gmail API<br/>(optional)"]
 
     spa -->|"REST JSON / multipart<br/>polls run status"| routes
     routes --> authz
     routes --> svc
     routes --> llmc
     routes --> emb
+    routes --> gm
+    routes --> pdf
     routes -->|"upload accepted / run created"| bg
     bg --> svc
     svc --> proc
@@ -39,4 +44,7 @@ flowchart TB
     svc -->|"SQLAlchemy async"| pg
     stor --> files
     llmc -->|"HTTP"| llmsrv
+    gm -->|"HTTPS"| google
+    gm --> svc
     authz -->|"user + membership lookup"| pg
+    gm -->|"connections, oauth states, imports"| pg

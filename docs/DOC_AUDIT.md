@@ -1,10 +1,64 @@
-# Documentation audit: what was out of date
+# Documentation audit
 
-This file records every claim in the previous README, `ARCHITECTURE_NOTES.md` and diagrams that no longer matched the code, what is true now, and where it was verified. It is a one-time review aid; delete it once you have read it.
+Two review passes are recorded here. **Pass 2 (this revision)** is first; pass 1 is kept below for history. This is a one-time review aid; delete it once you have read it.
 
-Method: static reading of the repository (no tests or services were run). Mermaid syntax of every `.mmd` file and of the README diagram was checked with the Mermaid parser.
+Method (both passes): static reading of the repository. No tests or services were run, and the Gmail integration was not exercised against Google. Mermaid syntax of every `.mmd` file and the README diagram was checked with the Mermaid parser.
 
-## A. Claims that were wrong or missing
+---
+
+## Pass 2: Gmail integration, PDF export, sessions
+
+### A. In-repo documentation that no longer matched the code
+
+Some documentation in the repository had been edited for an earlier, partial Gmail state. Those edits are superseded.
+
+| # | Claim in the repo | Current reality | Evidence |
+|---|---|---|---|
+| 1 | Alembic head is `2c985d8c78fb` (DOC_AUDIT, diagram 05); earlier docs said `c4f91a2d7e60` | Head is **`a7c19d4e2b61`** (four Gmail migrations on top of `c4f91a2d7e60`) | `alembic/versions/*` |
+| 2 | Two Gmail tables (diagram 05); "15 model files; verify" (diagram 03); 13 tables (older docs) | **17 tables**: also `gmail_imports` and `gmail_import_attachments`; models and migrations agree | `models/gmail_*.py`, `a7c19d4e2b61`, `13e2a56a8a32` |
+| 3 | Gmail "exposes message metadata and snippets; does not provide full message bodies and attachments" (README) | Full import exists: email text becomes a document, and supported attachments become documents (10 per email, 10 MiB each, 25 MiB total) | `routes/gmail.py` `import_gmail_message`, `_import_gmail_attachments` |
+| 4 | README endpoint list omitted the import endpoint | `POST /organizations/{id}/gmail/messages/{message_id}/import` (owner or admin) | `routes/gmail.py` |
+| 5 | Diagram 01 said "Gmail OAuth is implemented for read-only access" with no Google node | Google (OAuth + Gmail API) added as an optional external system | diagram 01 |
+| 6 | "Single access token, no refresh" (notes 3.4) | `POST /auth/refresh`; login returns an access and a refresh token; SPA refreshes silently | `auth/routes.py`, `auth/security.py`, `lib/api.js` |
+| 7 | Evaluation runs "started" with no concurrency rule (diagram 10, README) | Global advisory lock + 409 if any run is pending/running in any organization | `routes/evaluations.py` |
+| 8 | Conversation and evaluation endpoints without export | PDF downloads for a chat answer and for an evaluation run (ReportLab) | `routes/conversations.py`, `routes/evaluations.py`, `services/*_pdf_export.py` |
+| 9 | SPA had three pages | Four pages (Gmail added); Download PDF buttons; OAuth return handled in `App.jsx` | `App.jsx`, `Sidebar.jsx`, `GmailPage.jsx` |
+| 10 | "about 290 test functions" / 288 (README, notes) | 372 test functions | `tests/` |
+| 11 | `main.py` "includes 9 routers" | 11 router instances (gmail registers two) | `main.py` |
+| 12 | `.env.example` "only lists app name ... database URL" | Now also lists the Gmail variables, but still no `JWT_SECRET_KEY` or `FRONTEND_URL` | `.env.example` |
+
+### B. New or changed documentation
+
+- Diagrams **15** (Gmail OAuth connect sequence) and **16** (Gmail message and attachment import) are new.
+- Updated: 01, 02, 03, 04, 05, 06, 09, 10, 11, 12, 14. Unchanged: 07, 08, 13.
+- README: Gmail section rewritten (what it does, what to know, setup), sessions, PDF export, one-active-evaluation rule, new environment variables, known limitations.
+- ARCHITECTURE_NOTES: sections 1.1 to 1.8, 2, 3 and 4 updated; new inconsistencies 15 to 22.
+
+### C. New findings (recorded as known issues; no code was changed)
+
+1. **`reportlab` is declared only as a dev dependency**, but production modules import it when the API starts. Fine for `make install`; likely to break an install without dev dependencies.
+2. **`FRONTEND_URL` defaults to port 8443** while `make dev` uses 5173, so the post-OAuth redirect lands on the wrong port unless the variable is set. It is missing from `.env.example`.
+3. **One active evaluation across all organizations**; a crash-stuck run would likely block everyone.
+4. **Refresh tokens are stateless and non-revocable**; both tokens are in `localStorage`.
+5. **Imported Gmail content is visible to the whole organization.**
+6. **Gmail lifecycle gaps:** no disconnect, no cleanup of OAuth state rows, no CHECK constraints on status columns, failed imports not retryable.
+7. **Gmail page does not gate by role**, so plain members see a 403 per import.
+
+### D. Checked and unchanged since pass 1
+
+Chat routing and the general-knowledge issue (pass-1 finding 11 still applies), retrieval (three lists), LLM client, ingestion pipeline and parsers, evaluation metrics and import, storage layout, Docker Compose, Makefile. `chat.py`, `retrieval.py`, `llm.py` and all parsers are byte-identical to the pass-1 snapshot.
+
+### E. Not read line by line this pass
+
+`gmail_google_client.py` (623 lines) was skimmed for endpoints, limits, timeouts and returned fields rather than read in full. The two PDF export modules were checked for imports, entry points and headers, not for layout. `GmailPage.jsx` was checked for API calls, props and role handling, not for UI details.
+
+---
+
+## Pass 1 (kept for history)
+
+The claims below were corrected in the first review; they are listed so you can see how the docs drifted from the original version.
+
+### Pass 1, A. Claims that were wrong or missing
 
 | # | Previous claim (where) | Current reality | Evidence |
 |---|---|---|---|
@@ -27,25 +81,9 @@ Method: static reading of the repository (no tests or services were run). Mermai
 | 17 | Notes `.env.example` item mentioned only the missing key and password | Still true; README now tells readers what to add | `.env.example` |
 | 18 | Notes said "chat.py (963 lines)" | 967 lines | `wc -l` |
 
-## B. Newly documented
+### Pass 1, B. Newly documented
 
 - Diagram 13: LLM adaptive thinking decision flow.
 - Diagram 14: tests, benchmarks and dev tooling (including the 60-case JSONL and 20-question chat set).
 - Notes 3.1 items 11-14 (new findings, below).
 - README: how to use the evaluation dashboard, opt-in test flags, benchmark commands.
-
-## C. New findings recorded as known issues (not fixed; code was not changed)
-
-1. **General-knowledge routing hijacks insurance questions.** Running `_is_general_knowledge_question` in isolation returned `True` for "Who is the Chief Claims Officer?", "Who is the Senior Adjuster?", "Who is Sandra Whitlow?", "Who is the Customer Relations Manager?" and "How does the grace period work?". Those skip retrieval. Evaluation runs bypass chat routing, so the dashboard cannot show it. Your 20 chat questions avoid this by wording (e.g. "Who can approve a $30,000 claim…").
-2. **Thinking timeout cap.** `min(LLM_TIMEOUT_SECONDS, LLM_THINKING_TIMEOUT_SECONDS)` makes the effective thinking timeout 60 s, not 75 s.
-3. **Alias/model mismatch.** Alias `docpilot-qwen3-4b` serves an 8B model.
-4. **Hard-coded org id** in three scripts.
-5. **Leftovers:** `apply_chat_fix.py`, `apply_config.py` (already applied), `EvalHistoryChart.jsx.bak`, `frontend/CLAUDE.md` and `AGENTS.md` (Figma Make boilerplate pointing at a non-existent `src/App.tsx`).
-
-## D. Checked and unchanged
-
-Historical findings from the earlier audit included a 13-table schema at Alembic head `c4f91a2d7e60`. That schema count and migration reference are stale: the October 2026 review reports current head `2c985d8c78fb`, and Gmail models have since been added. Re-verify the current schema and diagrams before relying on the earlier audit's claims. Other historical topics reviewed included authentication, role rules, multi-tenancy, ingestion, JSONL import, evaluation metrics, storage, streaming, CORS, OCR and ANN indexing.
-
-## E. Not re-read line by line this pass
-
-Carried forward from the previous notes after spot checks (route inventory, role checks, import limit, account-deletion 409, conversation ordering, model/migration alignment): `auth/routes.py`, `organizations.py`, `membership.py`, `conversations.py`, the import validation in `evaluations.py`, and `schemas/*`. If you changed behavior there recently, re-check diagrams 06, 09 and 11.

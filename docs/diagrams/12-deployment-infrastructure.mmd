@@ -2,6 +2,7 @@
 %% Only a development topology exists in the repository. No production deployment config was found.
 %% CHANGED: LLM is Qwen3-8B Q4_K_M loaded from a LOCAL file (not auto-downloaded), ctx 8192, --parallel 1;
 %% backend runs with CUDA_VISIBLE_DEVICES empty (embeddings on CPU); new LLM_THINKING_* / LLM_MAX_TOKENS settings.
+%% Latest: refresh-token, Gmail and FRONTEND_URL settings; optional Google dependency.
 flowchart TB
     dev["Developer machine / host OS<br/>make dev orchestrates everything below"]
 
@@ -18,10 +19,12 @@ flowchart TB
         llc["llama-server (optional in make dev)<br/>image ghcr.io/ggml-org/llama.cpp:server-cuda<br/>host 3000 -> container 8080<br/>-m /models/Qwen3-8B-Q4_K_M.gguf<br/>--alias docpilot-qwen3-4b (name does not match the 8B file)<br/>ctx 8192, ngl 99, parallel 1<br/>NVIDIA GPU reservation, restart unless-stopped<br/>mounts ./data/local_models -> /models,<br/>./data/models/llama.cpp -> /root/.cache"]
     end
 
-    cfg["Configuration<br/>.env at project root read by pydantic-settings<br/>required: DATABASE_URL, JWT_SECRET_KEY<br/>optional: STORAGE_PATH, ACCESS_TOKEN_EXPIRE_MINUTES, APP_NAME, ENVIRONMENT, DEBUG,<br/>LLM_BASE_URL (default http://127.0.0.1:3000/v1), LLM_API_KEY,<br/>LLM_MODEL (default docpilot-qwen3-4b), LLM_TIMEOUT_SECONDS (60),<br/>LLM_THINKING_MODE (auto|always|never), LLM_THINKING_TIMEOUT_SECONDS (75),<br/>LLM_THINKING_MAX_TOKENS (3000), LLM_THINKING_TEMPERATURE (0.6), LLM_MAX_TOKENS (700)"]
+    cfg["Configuration<br/>.env at project root read by pydantic-settings<br/>required: DATABASE_URL, JWT_SECRET_KEY<br/>optional: STORAGE_PATH, ACCESS_TOKEN_EXPIRE_MINUTES, APP_NAME, ENVIRONMENT, DEBUG,<br/>LLM_BASE_URL (default http://127.0.0.1:3000/v1), LLM_API_KEY,<br/>LLM_MODEL (default docpilot-qwen3-4b), LLM_TIMEOUT_SECONDS (60),<br/>LLM_THINKING_MODE (auto|always|never), LLM_THINKING_TIMEOUT_SECONDS (75),<br/>LLM_THINKING_MAX_TOKENS (3000), LLM_THINKING_TEMPERATURE (0.6), LLM_MAX_TOKENS (700),<br/>REFRESH_TOKEN_EXPIRE_DAYS (7),<br/>optional Gmail: GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REDIRECT_URI,<br/>GMAIL_TOKEN_ENCRYPTION_KEY (Fernet), FRONTEND_URL (default http://127.0.0.1:8443)"]
     alem["Alembic migrations<br/>make migrate: uv run alembic upgrade head<br/>manual step, not run at app startup"]
 
     hf["Hugging Face Hub (external)<br/>UNVERIFIED but implied for BGE-M3 download"]
+    goog["Google OAuth + Gmail API (external, optional)<br/>redirect URI must be registered in Google Cloud Console:<br/>http://127.0.0.1:8000/gmail/oauth/callback"]
+    fumis["FRONTEND_URL defaults to port 8443,<br/>but make dev serves the SPA on 5173.<br/>Set FRONTEND_URL=http://127.0.0.1:5173 in .env,<br/>or the post-OAuth redirect lands on the wrong port"]
     browser["Browser"]
 
     dev --> vite
@@ -36,10 +39,12 @@ flowchart TB
     uv --- models
     llc --- gguf
     models -.->|"first use"| hf
+    uv -.->|"HTTPS, optional"| goog
+    cfg ~~~ fumis
     cfg -.-> uv
     alem -.->|"schema"| pgc
 
     absent["NOT PRESENT: Dockerfiles for backend or frontend, reverse proxy / TLS,<br/>production compose or Kubernetes manifests, object storage service,<br/>separate vector DB (vectors live in Postgres), job queue / worker process,<br/>CORS configuration, CI/CD configuration (no .github directory in the archive)"]
     compose ~~~ absent
     classDef note fill:#fff,stroke:#999,stroke-dasharray: 4 4,color:#555
-    class absent,hf note
+    class absent,hf,goog,fumis note

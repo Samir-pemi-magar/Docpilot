@@ -1,7 +1,7 @@
 %% DocPilot - Database ER diagram
-%% Historical ERD: the original table-count and migration-head claims are stale.
-%% Current Alembic head at the October 2026 documentation review: 2c985d8c78fb.
-%% Gmail models were added after the original ERD. This diagram is not a complete current schema reference until their entities and relationships are added and verified.
+%% Re-verified against backend/app/models/*.py and alembic/versions: 17 tables, Alembic head a7c19d4e2b61.
+%% Gmail tables (gmail_connections, gmail_oauth_states, gmail_imports, gmail_import_attachments) added in
+%% migrations e046c51bc5ec, 2c985d8c78fb, 13e2a56a8a32, a7c19d4e2b61. Gmail status columns have no CHECK constraints.
 %% Cardinality note: ORM relationships and FK ondelete shown in relationship labels.
 erDiagram
     users {
@@ -155,6 +155,35 @@ erDiagram
         timestamptz consumed_at "nullable"
         timestamptz created_at
     }
+    gmail_imports {
+        uuid id PK
+        uuid gmail_connection_id FK "indexed; CASCADE"
+        uuid organization_id FK "indexed; CASCADE"
+        string gmail_message_id "max 512"
+        string sender "nullable; max 1000"
+        string subject "nullable; max 1000"
+        string message_date "nullable; max 255"
+        string status "default pending; max 30"
+        uuid document_id FK "nullable; indexed; SET NULL"
+        text error_message "nullable"
+        timestamptz created_at
+        timestamptz updated_at
+        %% Constraint: UNIQUE(gmail_connection_id, gmail_message_id)
+    }
+    gmail_import_attachments {
+        uuid id PK
+        uuid gmail_import_id FK "indexed; CASCADE"
+        string gmail_attachment_id "max 512"
+        string filename "max 255"
+        string content_type "nullable; max 255"
+        int size_bytes "nullable"
+        string status "default pending; max 30"
+        uuid document_id FK "nullable; indexed; SET NULL"
+        text error_message "nullable"
+        timestamptz created_at
+        timestamptz updated_at
+        %% Constraint: UNIQUE(gmail_import_id, gmail_attachment_id)
+    }
     users ||--o{ memberships : "CASCADE"
     organizations ||--o{ memberships : "CASCADE"
     organizations ||--o{ documents : "CASCADE"
@@ -175,5 +204,10 @@ erDiagram
     organizations ||--o{ gmail_connections : "CASCADE"
     users ||--o{ gmail_oauth_states : "CASCADE"
     organizations ||--o{ gmail_oauth_states : "CASCADE"
+    gmail_connections ||--o{ gmail_imports : "CASCADE"
+    organizations ||--o{ gmail_imports : "CASCADE"
+    gmail_imports ||--o{ gmail_import_attachments : "CASCADE"
+    documents |o--o{ gmail_imports : "SET NULL"
+    documents |o--o{ gmail_import_attachments : "SET NULL"
     evaluation_runs ||--o{ evaluation_results : "CASCADE"
     evaluation_cases |o--o{ evaluation_results : "SET NULL"

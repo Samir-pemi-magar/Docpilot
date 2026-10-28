@@ -1,5 +1,7 @@
 %% DocPilot - Evaluation architecture and metrics
-%% CHANGED: runs now execute as a FastAPI BackgroundTask. POST .../runs returns 201 with
+%% CHANGED (latest): only ONE run can be active at a time, across ALL organizations (advisory lock + 409);
+%% a PDF report can be downloaded per run.
+%% Earlier change: runs execute as a FastAPI BackgroundTask. POST .../runs returns 201 with
 %% status = pending; the UI polls the run every 800 ms until it is completed or failed.
 flowchart TD
     subgraph author["Dataset authoring (any org member)"]
@@ -14,9 +16,12 @@ flowchart TD
     end
 
     start["POST /evaluation-datasets/ID/runs {top_k 1..100}"]
+    lock["pg_advisory_xact_lock(724193681)<br/>serializes concurrent starts"]
+    act{"any run with status pending or running<br/>in ANY organization?"}
+    e409["409 An evaluation is already running.<br/>Wait for it to finish"]
     run["INSERT evaluation_runs status = pending, commit<br/>respond 201 immediately"]
     bgt["background_tasks.add_task<br/>run_evaluation_background<br/>own DB session from get_evaluation_session_factory"]
-    ui_poll["SPA polls GET .../runs/ID every 800 ms<br/>shows 'Queued' (pending) or 'In progress' (running),<br/>then loads results"]
+    ui_poll["SPA polls GET .../runs/ID every 800 ms<br/>shows 'Queued' (pending) or 'In progress' (running),<br/>then loads results.<br/>After login or reload the dashboard restores<br/>an active run found in the run history"]
 
     subgraph per["run_evaluation: status = running; for each case in position order (sequential)"]
         direction TB
@@ -41,7 +46,10 @@ flowchart TD
     agg["Aggregate: arithmetic mean over completed cases that have the label<br/>stored in evaluation_runs.metrics with top_k and evaluated-case counts<br/>run.status = completed<br/>unexpected run-level error: run.status = failed + error_message"]
     ui["GET runs, run, results (filter failures, limit/offset)<br/>consumed by Eval dashboard"]
 
-    cases --> start --> run --> bgt --> per --> agg --> ui
+    cases --> start --> lock --> act
+    act -->|"yes"| e409
+    act -->|"no"| run --> bgt --> per --> agg --> ui
+    ui --> pdfx["GET .../runs/ID/pdf<br/>ReportLab report: dataset, run, metrics, results"]
     run --> ui_poll
     ui_poll -.-> agg
 
@@ -55,7 +63,7 @@ flowchart TD
     end
     agg ~~~ metrics
 
-    notimpl["NOT IMPLEMENTED: LLM-as-judge, semantic answer similarity,<br/>faithfulness/groundedness, precision@k, nDCG, job queue / separate worker,<br/>crash recovery for runs left in pending/running.<br/>reference_answer is stored and snapshotted but not used by any metric.<br/>Evaluation uses its own prompt and context size, not the chat router logic."]
+    notimpl["NOT IMPLEMENTED: LLM-as-judge, semantic answer similarity,<br/>faithfulness/groundedness, precision@k, nDCG, job queue / separate worker,<br/>crash recovery: a run left pending/running by a crash has no reset code,<br/>and because the active-run check is global it would likely block new runs in every organization (409).<br/>reference_answer is stored and snapshotted but not used by any metric.<br/>Evaluation uses its own prompt and context size, not the chat router logic."]
     metrics ~~~ notimpl
     classDef note fill:#fff,stroke:#999,stroke-dasharray: 4 4,color:#555
     class notimpl note

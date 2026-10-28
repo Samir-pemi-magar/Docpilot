@@ -1,19 +1,20 @@
 %% DocPilot - Backend components (backend/app), arrows = real import/call dependencies
-%% Changes vs. previous version: evaluation background runner + session factory,
-%% llm settings, DOCX/XLSX parser notes.
+%% Changes vs. previous version: Gmail router + services, PDF export services,
+%% /auth/refresh, 4 new models. (Earlier: evaluation background runner, llm settings.)
 flowchart LR
     main["main.py<br/>creates app, registers 11 router instances"]
     lifespan["core/lifespan.py<br/>sets app.state.storage<br/>(get_storage does not read it)"]
-    config["core/config.py<br/>Settings (incl. llm_thinking_*)"]
+    config["core/config.py<br/>Settings (llm_thinking_*, refresh_token_expire_days,<br/>gmail_*, frontend_url)"]
 
     subgraph routes["api/routes + auth/routes"]
-        r_auth["auth/routes<br/>register, login, me, delete me"]
+        r_auth["auth/routes<br/>register, login, refresh, me, delete me"]
         r_org["organizations"]
         r_doc["documents"]
         r_search["search"]
         r_chat["chat<br/>routing, rewrite, context,<br/>guard, persistence inline"]
-        r_conv["conversations<br/>queries models directly"]
-        r_eval["evaluations<br/>start_evaluation_run schedules<br/>a background task"]
+        r_conv["conversations<br/>queries models directly,<br/>answer PDF download"]
+        r_eval["evaluations<br/>start_evaluation_run: global advisory lock,<br/>409 if any run active, schedules background task;<br/>run PDF download"]
+        r_gmail["gmail<br/>oauth start, callback (no JWT),<br/>status, messages, import"]
         r_misc["health, version"]
     end
 
@@ -37,6 +38,8 @@ flowchart LR
         s_embed["embedding"]
         s_eval["evaluations<br/>CRUD, import"]
         s_run["evaluation_runner<br/>run_evaluation,<br/>run_evaluation_background"]
+        s_gm["gmail_oauth, gmail_oauth_state,<br/>gmail_tokens, gmail_google_client"]
+        s_pdf["chat_pdf_export,<br/>evaluation_pdf_export (ReportLab)"]
     end
 
     subgraph processing["processing"]
@@ -49,7 +52,7 @@ flowchart LR
 
     emb["embeddings<br/>LocalBGEEmbeddingProvider"]
     storage["storage<br/>LocalStorage"]
-    models["models (SQLAlchemy)<br/>15 model files; verify table mappings"]
+    models["models (SQLAlchemy)<br/>17 tables"]
     schemas["schemas (Pydantic)"]
 
     main --> routes
@@ -61,6 +64,7 @@ flowchart LR
     r_org --> d_authz
     r_doc --> d_authz
     r_search --> d_authz
+    r_gmail --> d_authz
     r_chat --> d_authz
     r_conv --> d_authz
     r_eval --> d_authz
@@ -81,6 +85,13 @@ flowchart LR
     r_conv --> models
     r_eval --> s_eval
     r_eval --> s_run
+    r_eval --> s_pdf
+    r_conv --> s_pdf
+    r_gmail --> s_gm
+    r_gmail --> s_doc
+    r_gmail --> d_api
+    r_gmail --> models
+    s_gm --> config
     r_eval --> d_emb
     r_eval --> d_db
     s_run --> s_ret

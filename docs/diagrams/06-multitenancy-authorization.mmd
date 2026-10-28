@@ -1,11 +1,11 @@
 %% DocPilot - Multi-tenancy and authorization
-%% Re-verified (this pass): spot-checked authorization, membership and account-deletion rules; unchanged.
+%% Updated: access + refresh tokens (token_type claim), Gmail role gates, imported mail is org-wide.
 %% Isolation is enforced in application code (path org id + membership + org-scoped queries).
 %% No PostgreSQL row-level security was found in models or migrations.
 flowchart TD
     req["Request to /organizations/{organization_id}/..."]
     tok["OAuth2PasswordBearer<br/>Authorization: Bearer JWT"]
-    dec["decode_access_token<br/>HS256, sub = user UUID, exp 30 min default"]
+    dec["decode_access_token<br/>HS256, sub = user UUID, exp 30 min default,<br/>token_type must be access (refresh tokens rejected)"]
     usr{"User exists and<br/>is_active = true?"}
     e401["401 Could not validate credentials"]
     mem{"memberships row for<br/>organization_id + user_id?"}
@@ -27,8 +27,8 @@ flowchart TD
 
     subgraph roles["Role capabilities, verified in routes and tests"]
         direction TB
-        m["member<br/>read org, list members,<br/>list/get/download documents,<br/>search, chat, own conversations,<br/>ALL evaluation endpoints"]
-        a["admin = member +<br/>upload document / new version,<br/>delete document, update org,<br/>add members (admin or member only),<br/>change/remove members with role member"]
+        m["member<br/>read org, list members,<br/>list/get/download documents,<br/>search, chat, own conversations (+ answer PDF),<br/>ALL evaluation endpoints (+ run PDF),<br/>own Gmail connection: oauth start, status, message list"]
+        a["admin = member +<br/>upload document / new version,<br/>import Gmail messages and attachments,<br/>delete document, update org,<br/>add members (admin or member only),<br/>change/remove members with role member"]
         o["owner = admin +<br/>manage any non-owner membership,<br/>delete organization<br/>(single owner: owner role cannot be<br/>assigned or transferred by any endpoint)"]
         m --> a --> o
     end
@@ -38,3 +38,17 @@ flowchart TD
         del["DELETE /auth/me requires password<br/>409 if user owns any organization<br/>documents.created_by / versions.uploaded_by set NULL<br/>user row deleted: memberships and conversations cascade"]
     end
     roles ~~~ acct
+
+    subgraph tokens["Token lifecycle (new)"]
+        direction TB
+        lg["POST /auth/login returns access token (30 min)<br/>and refresh token (7 days, REFRESH_TOKEN_EXPIRE_DAYS)"]
+        rf["POST /auth/refresh {refresh_token}<br/>decode_refresh_token requires token_type = refresh,<br/>user must exist and be active<br/>returns a NEW access + refresh pair, else 401"]
+        st["Stateless: refresh tokens are not stored or revoked server-side,<br/>and the old one stays valid until it expires.<br/>SPA keeps both tokens in localStorage and refreshes<br/>once (single-flight) when a request gets 401"]
+        lg --> rf --> st
+    end
+    acct ~~~ tokens
+
+    gnote["Gmail data scope: a connection belongs to ONE user in ONE organization.<br/>Imported emails and attachments become ordinary organization documents,<br/>so every member of that organization can search and cite them.<br/>Importing requires owner or admin."]
+    tokens ~~~ gnote
+    classDef note fill:#fff,stroke:#999,stroke-dasharray: 4 4,color:#555
+    class gnote note

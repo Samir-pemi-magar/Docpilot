@@ -11,8 +11,8 @@ flowchart TB
 
     subgraph pytest["pytest (make test / make check)"]
         direction TB
-        unit["unit tests: parsers, normalization, chunking,<br/>embeddings (fakes), llm client (mock transport)"]
-        integ["API / DB tests: auth, authorization, isolation,<br/>documents, search, chat, evaluations<br/>need Postgres on localhost:5433,<br/>database docpilot_test (forced in conftest.py)"]
+        unit["unit tests: parsers, normalization, chunking,<br/>embeddings (fakes), llm client (mock transport),<br/>gmail oauth / state / tokens / google client,<br/>chat and evaluation PDF export"]
+        integ["API / DB tests: auth, authorization, isolation,<br/>documents, search, chat, evaluations, gmail routes<br/>need Postgres on localhost:5433,<br/>database docpilot_test (forced in conftest.py)"]
         real["opt-in real-model tests (skipped by default)<br/>RUN_REAL_BGE_TEST, RUN_REAL_RAG_CHAT,<br/>RUN_REAL_UPLOAD_RAG, RUN_REAL_WORKER_TEST"]
     end
 

@@ -1,5 +1,5 @@
 %% DocPilot - API boundaries and request flow (FastAPI dependency injection)
-%% Changes vs. previous version: evaluation session factory + background evaluation tasks.
+%% Changes vs. previous version: /auth/refresh, Gmail endpoints, PDF downloads, single-active-run 409.
 flowchart LR
     client["Browser SPA<br/>fetch with Bearer token<br/>base /api"]
     proxy["Vite dev proxy<br/>/api -> backend, strips prefix<br/>no CORS middleware in backend"]
@@ -8,7 +8,9 @@ flowchart LR
         p1["GET /health"]
         p2["GET /version"]
         p3["POST /auth/register"]
-        p4["POST /auth/login"]
+        p4["POST /auth/login<br/>(returns access + refresh token)"]
+        p5["POST /auth/refresh"]
+        p6["GET /gmail/oauth/callback<br/>Google redirect, validated by one-time state, no JWT"]
     end
 
     subgraph user["Authenticated user (get_current_user)"]
@@ -21,14 +23,16 @@ flowchart LR
         m2["GET documents, versions, download"]
         m3["POST .../search"]
         m4["POST .../chat"]
-        m5["GET, DELETE .../conversations (own only)"]
-        m6["all /evaluation-datasets endpoints<br/>datasets, cases, import,<br/>POST runs (async, returns pending),<br/>GET run + results"]
+        m5["GET, DELETE .../conversations (own only)<br/>GET .../messages/ID/pdf"]
+        m7["POST .../gmail/oauth/start<br/>GET .../gmail/status, /gmail/messages<br/>(own connection only)"]
+        m6["all /evaluation-datasets endpoints<br/>datasets, cases, import,<br/>POST runs (async, returns pending, 409 if any run active),<br/>GET run + results, GET run pdf"]
     end
 
     subgraph adm["Owner or admin (require_organization_roles)"]
         a1["POST documents, POST documents/ID/versions<br/>DELETE documents/ID"]
         a2["PATCH organization"]
         a3["POST, PATCH, DELETE .../members"]
+        a4["POST .../gmail/messages/ID/import"]
     end
 
     subgraph own["Owner only"]
