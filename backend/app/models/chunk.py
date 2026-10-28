@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func, text
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -32,6 +32,11 @@ class Chunk(Base):
         CheckConstraint(
             "token_count >= 0",
             name="ck_chunks_token_count_nonnegative",
+        ),
+        Index(
+            "ix_chunks_text_search",
+            text("to_tsvector('simple'::regconfig, text)"),
+            postgresql_using="gin",
         ),
     )
 

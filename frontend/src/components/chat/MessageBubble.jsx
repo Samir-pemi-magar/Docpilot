@@ -2,7 +2,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import Badge from "../ui/Badge";
 
-export default function MessageBubble({ message }) {
+export default function MessageBubble({ message, onDownloadPdf }) {
   const isUser = message.role === "user";
 
   if (isUser) {
@@ -55,11 +55,25 @@ export default function MessageBubble({ message }) {
             </div>
           )}
 
-          {message.timestamp && (
-            <p className="text-[10px] text-[var(--muted-foreground)] mt-1.5 font-mono">
-              {message.timestamp}
-            </p>
-          )}
+          <div className="flex flex-wrap items-center gap-3 mt-2">
+            {message.timestamp && (
+              <p className="text-[10px] text-[var(--muted-foreground)] font-mono">
+                {message.timestamp}
+              </p>
+            )}
+            {typeof message.id === "string" &&
+              /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(message.id) &&
+              onDownloadPdf && (
+                <button
+                  type="button"
+                  onClick={() => onDownloadPdf(message.id)}
+                  className="text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] underline underline-offset-2"
+                  title="Download this answer as a PDF"
+                >
+                  Download PDF
+                </button>
+              )}
+          </div>
         </div>
       </div>
     </div>

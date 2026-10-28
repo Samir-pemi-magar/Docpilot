@@ -171,8 +171,25 @@ export function useMockChat(
             sources: assistantSources,
           },
         ]);
-
         setSources(assistantSources);
+
+        // Replace temporary IDs with persisted database IDs for export actions.
+        try {
+          const savedConversation = await api.conversation(
+            organizationId,
+            returnedConversationId,
+          );
+          const savedMessages = (savedConversation.messages || []).map(mapMessage);
+          if (savedMessages.length > 0) {
+            setMessages(savedMessages);
+            const lastSavedAssistant = [...savedMessages]
+              .reverse()
+              .find((message) => message.role === "assistant");
+            setSources(mapSources(lastSavedAssistant?.sources));
+          }
+        } catch {
+          // Keep the answer visible if the follow-up refresh fails.
+        }
 
         // Refresh the sidebar so the saved conversation and updated title appear.
         await onConversationsChanged?.();

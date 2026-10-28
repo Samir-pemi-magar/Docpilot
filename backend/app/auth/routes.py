@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import jwt
+import uuid
+
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -11,11 +14,18 @@ from app.auth.dependencies import get_current_user
 from app.auth.schemas import (
     DeleteAccountRequest,
     LoginRequest,
+    RefreshRequest,
     RegisterRequest,
     TokenResponse,
     UserResponse,
 )
-from app.auth.security import create_access_token, hash_password, verify_password
+from app.auth.security import (
+    create_access_token,
+    create_refresh_token,
+    decode_refresh_token,
+    hash_password,
+    verify_password,
+)
 from app.core.config import get_settings
 from app.db.session import get_db_session
 from app.models.user import User
@@ -108,7 +118,58 @@ async def login(
         ),
     )
 
-    return TokenResponse(access_token=access_token)
+    refresh_token = create_refresh_token(
+        subject=str(user.id),
+        expires_delta=timedelta(days=settings.refresh_token_expire_days),
+    )
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+    )
+
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh_access_token(
+    data: RefreshRequest,
+    db: AsyncSession = Depends(get_db_session),
+) -> TokenResponse:
+    """Exchange a valid refresh token for a new access/refresh token pair."""
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Refresh token is invalid or expired. Please sign in again.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    try:
+        payload = decode_refresh_token(data.refresh_token)
+        subject = payload.get("sub")
+        user_id = uuid.UUID(subject) if subject else None
+    except (jwt.PyJWTError, ValueError, TypeError):
+        raise credentials_exception
+
+    result = await db.execute(
+        select(User).where(
+            User.id == user_id,
+            User.is_active.is_(True),
+        )
+    )
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise credentials_exception
+
+    settings = get_settings()
+    access_token = create_access_token(
+        subject=str(user.id),
+        expires_delta=timedelta(minutes=settings.access_token_expire_minutes),
+    )
+    refresh_token = create_refresh_token(
+        subject=str(user.id),
+        expires_delta=timedelta(days=settings.refresh_token_expire_days),
+    )
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+    )
 
 
 @router.get("/me", response_model=UserResponse)

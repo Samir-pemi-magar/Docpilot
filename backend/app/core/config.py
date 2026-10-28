@@ -20,6 +20,16 @@ class Settings(BaseSettings):
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 7
+
+    # Fernet key for encrypting stored Gmail OAuth refresh tokens.
+    gmail_token_encryption_key: str | None = None
+
+    # Google OAuth client configuration; optional until Gmail is configured.
+    gmail_client_id: str | None = None
+    gmail_client_secret: str | None = None
+    gmail_redirect_uri: str | None = None
+    frontend_url: str = "http://127.0.0.1:8443"
 
     # OpenAI-compatible LLM server; configured independently of embeddings.
     llm_base_url: str = "http://127.0.0.1:3000/v1"

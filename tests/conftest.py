@@ -78,6 +78,22 @@ async def test_user(db_session):
 
 
 @pytest.fixture
+async def test_organization(db_session):
+    from uuid import uuid4
+
+    from app.models.organization import Organization
+
+    organization = Organization(
+        name="Test Organization",
+        slug=f"test-organization-{uuid4().hex}",
+    )
+    db_session.add(organization)
+    await db_session.flush()
+
+    return organization
+
+
+@pytest.fixture
 def test_storage(tmp_path):
     return LocalStorage(tmp_path / "storage")
 

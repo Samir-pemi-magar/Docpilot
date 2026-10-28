@@ -44,7 +44,7 @@ Method: static reading of the repository (no tests or services were run). Mermai
 
 ## D. Checked and unchanged
 
-Database schema (13 tables, Alembic head `c4f91a2d7e60`); authentication and role rules; multi-tenancy and conversation ownership; route inventory and role gating; ingestion state machine and transaction handling; JSONL import limits; evaluation metric definitions; storage layout; lack of streaming, CORS, OCR and ANN index. Diagrams 05, 06 and 09 are therefore carried over with only a header note.
+Historical findings from the earlier audit included a 13-table schema at Alembic head `c4f91a2d7e60`. That schema count and migration reference are stale: the October 2026 review reports current head `2c985d8c78fb`, and Gmail models have since been added. Re-verify the current schema and diagrams before relying on the earlier audit's claims. Other historical topics reviewed included authentication, role rules, multi-tenancy, ingestion, JSONL import, evaluation metrics, storage, streaming, CORS, OCR and ANN indexing.
 
 ## E. Not re-read line by line this pass
 

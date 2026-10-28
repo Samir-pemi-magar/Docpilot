@@ -3,7 +3,8 @@ import AppShell from "./components/layout/AppShell";
 import ChatPage from "./pages/ChatPage";
 import DashboardPage from "./pages/DashboardPage";
 import FileManagerPage from "./pages/FileManagerPage";
-import { api, clearAccessToken, getAccessToken, setAccessToken } from "./lib/api";
+import GmailPage from "./pages/GmailPage";
+import { api, clearAccessToken, getAccessToken, setAccessToken, setRefreshToken } from "./lib/api";
 
 function LoginPage({ onLogin, onRegister }) {
   const [mode, setMode] = useState("login");
@@ -622,6 +623,40 @@ export default function App() {
   const [deleteConversationError, setDeleteConversationError] = useState("");
   const [loading, setLoading] = useState(Boolean(getAccessToken()));
   const [error, setError] = useState("");
+  const [gmailCallbackNotice, setGmailCallbackNotice] = useState(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const gmailResult = params.get("gmail");
+    const organizationId = params.get("organization_id");
+
+    if (!gmailResult) return;
+
+    if (gmailResult === "connected") {
+      setGmailCallbackNotice({
+        type: "success",
+        message: "Gmail connected successfully with read-only access.",
+      });
+    } else if (gmailResult === "cancelled") {
+      setGmailCallbackNotice({
+        type: "cancelled",
+        message: "Gmail authorization was cancelled. You can try again whenever you're ready.",
+      });
+    }
+
+    if (organizationId) {
+      window.sessionStorage.setItem("docpilot_gmail_oauth_org", organizationId);
+    }
+
+    params.delete("gmail");
+    params.delete("organization_id");
+    const query = params.toString();
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
+    );
+  }, []);
 
   const loadConversations = useCallback(async (organizationId) => {
     if (!organizationId) {
@@ -750,6 +785,19 @@ export default function App() {
         if (!cancelled) {
           setUser(currentUser);
           setOrganizations(organizationList);
+
+          const requestedOrganizationId = window.sessionStorage.getItem(
+            "docpilot_gmail_oauth_org",
+          );
+          const requestedOrganization = requestedOrganizationId
+            ? organizationList.find((item) => item.id === requestedOrganizationId)
+            : null;
+
+          if (requestedOrganization) {
+            setOrganization(requestedOrganization);
+            setPage("gmail");
+            window.sessionStorage.removeItem("docpilot_gmail_oauth_org");
+          }
         }
       } catch (err) {
         if (!cancelled) {
@@ -775,6 +823,7 @@ export default function App() {
   async function login(email, password) {
     const result = await api.login(email, password);
     setAccessToken(result.access_token);
+    setRefreshToken(result.refresh_token);
     setOrganization(null);
     setToken(result.access_token);
   }
@@ -916,6 +965,13 @@ export default function App() {
       )}
       {page === "eval" && <DashboardPage organizationId={organization.id} />}
       {page === "files" && <FileManagerPage organizationId={organization.id} />}
+      {page === "gmail" && (
+        <GmailPage
+          organizationId={organization.id}
+          callbackNotice={gmailCallbackNotice}
+          onDismissCallbackNotice={() => setGmailCallbackNotice(null)}
+        />
+      )}
       {conversationToDelete && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"

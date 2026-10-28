@@ -2,7 +2,7 @@
 %% Changes vs. previous version: evaluation background runner + session factory,
 %% llm settings, DOCX/XLSX parser notes.
 flowchart LR
-    main["main.py<br/>creates app, includes 9 routers"]
+    main["main.py<br/>creates app, registers 11 router instances"]
     lifespan["core/lifespan.py<br/>sets app.state.storage<br/>(get_storage does not read it)"]
     config["core/config.py<br/>Settings (incl. llm_thinking_*)"]
 
@@ -49,7 +49,7 @@ flowchart LR
 
     emb["embeddings<br/>LocalBGEEmbeddingProvider"]
     storage["storage<br/>LocalStorage"]
-    models["models (SQLAlchemy)<br/>13 tables"]
+    models["models (SQLAlchemy)<br/>15 model files; verify table mappings"]
     schemas["schemas (Pydantic)"]
 
     main --> routes

@@ -47,6 +47,7 @@ export default function EvalDashboard({ organizationId }) {
   const [topK, setTopK] = useState("5");
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [importing, setImporting] = useState(false);
   const [pendingImport, setPendingImport] = useState(null);
   const [availableDocuments, setAvailableDocuments] = useState([]);
@@ -117,6 +118,23 @@ export default function EvalDashboard({ organizationId }) {
     loadCases();
   }, [loadCases]);
 
+  // Restore an active persisted run after login or page reload.
+  // Wait for both datasets and history so the run's dataset can be selected.
+  useEffect(() => {
+    if (!datasets.length || !historyRuns.length) return;
+
+    const activeRun = historyRuns.find(
+      (item) => item.status === "pending" || item.status === "running"
+    );
+    if (!activeRun || !datasets.some((item) => item.id === activeRun.dataset_id)) {
+      return;
+    }
+
+    setDatasetId(activeRun.dataset_id);
+    setRun((current) => current?.id === activeRun.id ? current : activeRun);
+    setRunning(true);
+  }, [datasets, historyRuns]);
+
   async function createDataset(event) {
     event.preventDefault();
     setError("");
@@ -157,6 +175,41 @@ export default function EvalDashboard({ organizationId }) {
       setNotice("Question added.");
     } catch (err) {
       setError(err.message || "Could not add question.");
+    }
+  }
+
+  async function downloadEvaluationPdf() {
+    if (!organizationId || !run?.dataset_id || !run?.id) {
+      setError("Select a saved evaluation run before exporting.");
+      return;
+    }
+    if (run.status !== "completed" && run.status !== "failed") {
+      setError("Wait for the evaluation run to finish before exporting.");
+      return;
+    }
+
+    setError("");
+    setNotice("");
+    setDownloadingPdf(true);
+    try {
+      const blob = await api.downloadEvaluationRunPdf(
+        organizationId,
+        run.dataset_id,
+        run.id,
+      );
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `docpilot-evaluation-${run.id}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setNotice("Evaluation report download started.");
+    } catch (err) {
+      setError(err.message || "Unable to download the evaluation report.");
+    } finally {
+      setDownloadingPdf(false);
     }
   }
 
@@ -457,7 +510,7 @@ export default function EvalDashboard({ organizationId }) {
   }
 
   async function runEvaluation() {
-    if (!datasetId || !cases.length) return;
+    if (!datasetId || !cases.length || running) return;
 
     setRunning(true);
     setError("");
@@ -466,49 +519,72 @@ export default function EvalDashboard({ organizationId }) {
     setResults([]);
 
     try {
-      let currentRun = await api.startEvaluationRun(
+      const currentRun = await api.startEvaluationRun(
         organizationId, datasetId, Number(topK)
       );
       setRun(currentRun);
-
-      // Poll the persisted run while the backend evaluates individual cases.
-      const deadline = Date.now() + 10 * 60 * 1000;
-
-      while (currentRun.status === "pending" || currentRun.status === "running") {
-        if (Date.now() >= deadline) {
-          throw new Error(
-            "This evaluation is taking longer than expected. Its status is saved; check the run again shortly."
-          );
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, 800));
-
-        currentRun = await api.evaluationRun(
-          organizationId, datasetId, currentRun.id
-        );
-        setRun(currentRun);
-      }
-
-      // Results are requested only after the run reaches a terminal status.
-      const data = await api.evaluationRunResults(
-        organizationId, datasetId, currentRun.id
-      );
-      setResults(data);
       await loadHistory();
-
-      if (currentRun.status === "failed") {
-        setError(
-          currentRun.error_message || "The evaluation run failed."
-        );
-      } else {
-        setNotice("Evaluation completed. Results loaded from the backend.");
-      }
     } catch (err) {
-      setError(err.message || "Evaluation failed.");
-    } finally {
       setRunning(false);
+      setError(err.message || "Could not start evaluation.");
+      await loadHistory();
     }
   }
+
+  // Poll the persisted run independently of the button handler, including
+  // runs restored from history after a page reload or re-login.
+  useEffect(() => {
+    if (!organizationId || !run?.id || !run?.dataset_id) return;
+
+    if (run.status !== "pending" && run.status !== "running") {
+      setRunning(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function pollRun() {
+      try {
+        const latest = await api.evaluationRun(
+          organizationId, run.dataset_id, run.id
+        );
+        if (cancelled) return;
+
+        setRun(latest);
+
+        if (latest.status === "completed" || latest.status === "failed") {
+          setRunning(false);
+
+          const data = await api.evaluationRunResults(
+            organizationId, latest.dataset_id, latest.id
+          );
+          if (cancelled) return;
+
+          setResults(data);
+          await loadHistory();
+
+          if (latest.status === "failed") {
+            setError(latest.error_message || "The evaluation run failed.");
+          } else {
+            setNotice("Evaluation completed. Results loaded from the backend.");
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err.message || "Could not refresh evaluation progress.");
+        }
+      }
+    }
+
+    pollRun();
+    const timer = setInterval(pollRun, 1500);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [organizationId, run?.id, run?.dataset_id, run?.status, loadHistory]);
+
 
   const metrics = run?.metrics || {};
   const evaluated = Number(metrics.retrieval_evaluated_cases || 0);
@@ -797,7 +873,7 @@ export default function EvalDashboard({ organizationId }) {
               {running ? "Running…" : "Run evaluation"}
             </button>
           </div>
-          {running && (() => {
+          {(running || run?.status === "pending" || run?.status === "running") && (() => {
             const total = Number(run?.total_cases || 0);
             const completed = Number(run?.completed_cases || 0);
             const failed = Number(run?.failed_cases || 0);
@@ -845,6 +921,16 @@ export default function EvalDashboard({ organizationId }) {
         {run && <>
           <Panel title={`5. Run summary — ${run.status}`}>
             <p className="mb-3 break-all text-xs text-[var(--muted-foreground)]">Run ID: {run.id}</p>
+            {(run.status === "completed" || run.status === "failed") && (
+              <button
+                className={`${button} mb-4`}
+                type="button"
+                onClick={downloadEvaluationPdf}
+                disabled={downloadingPdf}
+              >
+                {downloadingPdf ? "Preparing PDF…" : "Download PDF report"}
+              </button>
+            )}
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Metric label="Hit rate@k" value={metricsAvailable ? percentage(metrics.hit_rate_at_k) : "N/A"} />
               <Metric label="Recall@k" value={metricsAvailable ? percentage(metrics.recall_at_k) : "N/A"} />

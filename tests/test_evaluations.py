@@ -239,6 +239,49 @@ class FakeEvaluationLLM:
         return "Fake evaluation answer"
 
 
+async def test_start_evaluation_rejected_when_another_run_is_active(
+    client, db_session
+):
+    owner = await create_user(
+        db_session, "eval-active-guard@example.com", "Active Guard Owner"
+    )
+    organization = await create_organization(
+        db_session, owner.id, "Active Guard Org", "active-guard-org"
+    )
+    token = await login(client, owner.email)
+
+    dataset_response = await create_dataset(client, token, organization.id)
+    assert dataset_response.status_code == 201, dataset_response.text
+    dataset_id = dataset_response.json()["id"]
+
+    # Simulate a persisted evaluation that is already in progress.
+    db_session.add(
+        EvaluationRun(
+            dataset_id=dataset_id,
+            started_by_user_id=owner.id,
+            status="running",
+            total_cases=10,
+            completed_cases=3,
+            failed_cases=0,
+            metrics={},
+        )
+    )
+    await db_session.flush()
+
+    response = await client.post(
+        f"/organizations/{organization.id}/evaluation-datasets/"
+        f"{dataset_id}/runs",
+        json={"top_k": 5},
+        headers=auth(token),
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == (
+        "An evaluation is already running. Wait for it to finish "
+        "before starting another."
+    )
+
+
 async def test_evaluation_run_results_and_failure_filtering(
     client, db_session, monkeypatch
 ):

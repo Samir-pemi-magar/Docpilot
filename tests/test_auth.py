@@ -416,3 +416,100 @@ async def test_delete_account_preserves_shared_documents_and_evaluations(
             Conversation.id == conversation_id
         )
     ) is None
+
+
+async def test_refresh_token_returns_new_token_pair(client, test_user):
+    login = await client.post(
+        "/auth/login",
+        json={
+            "email": test_user.email,
+            "password": "TestPassword123!",
+        },
+    )
+    assert login.status_code == 200
+    original = login.json()
+    assert original["refresh_token"]
+
+    response = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": original["refresh_token"]},
+    )
+
+    assert response.status_code == 200
+    refreshed = response.json()
+    assert refreshed["access_token"]
+    assert refreshed["refresh_token"]
+
+    # JWTs created within the same second can be identical.
+    # Check that the refreshed access token actually works.
+    me = await client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {refreshed['access_token']}"},
+    )
+    assert me.status_code == 200
+    assert me.json()["id"] == str(test_user.id)
+
+
+async def test_refresh_rejects_access_token(client, test_user):
+    from app.auth.security import create_access_token
+    from datetime import timedelta
+
+    access_token = create_access_token(
+        subject=str(test_user.id),
+        expires_delta=timedelta(minutes=5),
+    )
+
+    response = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": access_token},
+    )
+
+    assert response.status_code == 401
+
+
+async def test_refresh_rejects_malformed_token(client):
+    response = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": "not-a-valid-jwt"},
+    )
+
+    assert response.status_code == 401
+
+
+async def test_refresh_rejects_expired_token(client, test_user):
+    from datetime import timedelta
+    from app.auth.security import create_refresh_token
+
+    expired_token = create_refresh_token(
+        subject=str(test_user.id),
+        expires_delta=timedelta(seconds=-10),
+    )
+
+    response = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": expired_token},
+    )
+
+    assert response.status_code == 401
+
+
+async def test_refresh_rejects_inactive_user(client, test_user, db_session):
+    login = await client.post(
+        "/auth/login",
+        json={
+            "email": test_user.email,
+            "password": "TestPassword123!",
+        },
+    )
+    assert login.status_code == 200
+    refresh_token = login.json()["refresh_token"]
+
+    test_user.is_active = False
+    await db_session.flush()
+
+    response = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": refresh_token},
+    )
+
+    assert response.status_code == 401

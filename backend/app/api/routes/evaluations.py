@@ -9,9 +9,10 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
+    Response,
     status,
 )
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.sql import Select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,6 +44,7 @@ from app.services.evaluation_runner import (
     run_evaluation_background,
 )
 from app.services.llm import OpenAICompatibleLLMClient
+from app.services.evaluation_pdf_export import generate_evaluation_report_pdf
 from app.services.evaluations import (
     _case_response_data,
     create_case,
@@ -625,6 +627,25 @@ async def start_evaluation_run(
     llm_client: OpenAICompatibleLLMClient = Depends(get_evaluation_llm_client),
 ) -> EvaluationRun:
     """Create an evaluation run and schedule its execution."""
+    # Serialize evaluation starts across the application. The transaction-level
+    # lock is held until commit, so simultaneous requests cannot both pass the
+    # active-run check and create a run.
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:lock_key)"),
+        {"lock_key": 724193681},
+    )
+
+    active_run = await db.scalar(
+        select(EvaluationRun.id)
+        .where(EvaluationRun.status.in_(("pending", "running")))
+        .limit(1)
+    )
+    if active_run is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An evaluation is already running. Wait for it to finish before starting another.",
+        )
+
     dataset = await _require_dataset(
         db,
         organization_id=organization_id,
@@ -727,3 +748,50 @@ async def get_evaluation_run_results(
 
     result = await db.execute(query.limit(limit).offset(offset))
     return list(result.scalars().all())
+
+
+
+@router.get("/{dataset_id}/runs/{run_id}/pdf")
+async def download_evaluation_report_pdf(
+    organization_id: uuid.UUID,
+    dataset_id: uuid.UUID,
+    run_id: uuid.UUID,
+    access: OrganizationAccess = Depends(get_organization_access),
+    db: AsyncSession = Depends(get_db_session),
+) -> Response:
+    """Download a PDF report for a persisted evaluation run."""
+    dataset = await _require_dataset(
+        db,
+        organization_id=organization_id,
+        dataset_id=dataset_id,
+    )
+    run = await _require_evaluation_run(
+        db,
+        organization_id=organization_id,
+        dataset_id=dataset_id,
+        run_id=run_id,
+    )
+
+    result = await db.execute(
+        select(EvaluationResult)
+        .where(EvaluationResult.run_id == run.id)
+        .order_by(EvaluationResult.created_at, EvaluationResult.id)
+    )
+    all_results = list(result.scalars().all())
+
+    pdf_bytes = generate_evaluation_report_pdf(
+        dataset_name=dataset.name,
+        run=run,
+        results=all_results,
+    )
+
+    filename = f"docpilot-evaluation-{run.id}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )

@@ -1,6 +1,7 @@
 %% DocPilot - Database ER diagram
-%% Re-verified (this pass): 13 tables, Alembic head still c4f91a2d7e60, no schema drift. evaluation_runs.status 'pending' is now used by background runs.
-%% Verified against backend/app/models/*.py and alembic/versions (head: c4f91a2d7e60)
+%% Historical ERD: the original table-count and migration-head claims are stale.
+%% Current Alembic head at the October 2026 documentation review: 2c985d8c78fb.
+%% Gmail models were added after the original ERD. This diagram is not a complete current schema reference until their entities and relationships are added and verified.
 %% Cardinality note: ORM relationships and FK ondelete shown in relationship labels.
 erDiagram
     users {
@@ -133,6 +134,27 @@ erDiagram
         timestamptz created_at
     }
 
+    gmail_connections {
+        uuid id PK
+        uuid user_id FK "indexed; CASCADE"
+        uuid organization_id FK "indexed; CASCADE"
+        string google_email "max 320"
+        string encrypted_refresh_token "encrypted; max 2048"
+        string scopes "max 1000"
+        string status "default active; max 30"
+        timestamptz created_at
+        timestamptz updated_at
+        timestamptz last_used_at "nullable"
+        %% Constraint: UNIQUE(user_id, organization_id)
+    }
+    gmail_oauth_states {
+        string state_hash PK "SHA-256 hex digest; length 64"
+        uuid user_id FK "indexed; CASCADE"
+        uuid organization_id FK "indexed; CASCADE"
+        timestamptz expires_at "indexed"
+        timestamptz consumed_at "nullable"
+        timestamptz created_at
+    }
     users ||--o{ memberships : "CASCADE"
     organizations ||--o{ memberships : "CASCADE"
     organizations ||--o{ documents : "CASCADE"
@@ -149,5 +171,9 @@ erDiagram
     evaluation_datasets ||--o{ evaluation_cases : "CASCADE"
     evaluation_datasets ||--o{ evaluation_runs : "CASCADE"
     users |o--o{ evaluation_runs : "SET NULL"
+    users ||--o{ gmail_connections : "CASCADE"
+    organizations ||--o{ gmail_connections : "CASCADE"
+    users ||--o{ gmail_oauth_states : "CASCADE"
+    organizations ||--o{ gmail_oauth_states : "CASCADE"
     evaluation_runs ||--o{ evaluation_results : "CASCADE"
     evaluation_cases |o--o{ evaluation_results : "SET NULL"

@@ -4,6 +4,7 @@ const NAV_ITEMS = [
   { id: "chat", label: "Chat", icon: "💬", page: "chat" },
   { id: "eval", label: "Eval", icon: "📊", page: "eval" },
   { id: "files", label: "File Manager", icon: "📁", page: "files" },
+  { id: "gmail", label: "Gmail", icon: "✉️", page: "gmail" },
 ];
 
 function formatRelativeTime(value) {

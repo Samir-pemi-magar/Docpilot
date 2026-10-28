@@ -25,7 +25,7 @@ flowchart LR
     api -.->|"BGE-M3 weights download"| hf
     api -.->|"configurable"| other
 
-    notimpl["NOT PRESENT in repository:<br/>SSO/OAuth, email invitations,<br/>external object storage,<br/>separate vector database,<br/>separate worker/queue, streaming responses"]
+    notimpl["Not implemented:<br/>general-purpose SSO, email invitations,<br/>external object storage,<br/>separate vector database,<br/>separate worker/queue, streaming responses.<br/>Gmail OAuth is implemented for read-only access."]
     docpilot ~~~ notimpl
 
     classDef missing fill:#fff,stroke:#999,stroke-dasharray: 4 4,color:#555

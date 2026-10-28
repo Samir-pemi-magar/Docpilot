@@ -95,7 +95,7 @@ make install
 cp .env.example .env     # then edit it: see below
 ```
 
-`.env.example` only lists the app name, version, environment, debug flag and a database URL (with the password `change-me`). Add the missing required secret and make the database password match Compose. Minimum `.env`:
+`.env.example` includes application, database, and optional Gmail OAuth settings. Add the required JWT secret and ensure the database URL matches your Compose configuration. Configure Gmail OAuth only if you intend to use that integration. Minimum `.env`:
 
 ```env
 DATABASE_URL=postgresql+asyncpg://docpilot:docpilot_dev@127.0.0.1:5433/docpilot
@@ -112,6 +112,12 @@ LLM_THINKING_MODE=auto             # auto | always | never
 LLM_THINKING_TIMEOUT_SECONDS=75    # effectively capped by LLM_TIMEOUT_SECONDS
 LLM_THINKING_MAX_TOKENS=3000
 LLM_THINKING_TEMPERATURE=0.6
+
+# Optional: Gmail read-only integration
+GMAIL_TOKEN_ENCRYPTION_KEY=
+GMAIL_CLIENT_ID=
+GMAIL_CLIENT_SECRET=
+GMAIL_REDIRECT_URI=http://127.0.0.1:8000/gmail/oauth/callback
 ```
 
 ### Run
@@ -138,6 +144,44 @@ Run `make help` to list all commands (`up`, `down`, `status`, `logs`, `api-logs`
 
 Metrics: `hit_rate_at_k`, `recall_at_k` and `reciprocal_rank` (document level, need `relevant_document_ids`); `essential_fact_coverage` and `answerability_compliance` (lexical, need `essential_facts` / `answerable`). Evaluation runs retrieval plus a simplified answer prompt; it does not go through chat routing.
 
+## Gmail integration (optional)
+
+DocPilot can connect a user's Gmail account to an organization through Google OAuth. The integration requests the `gmail.readonly` scope and exposes message metadata and snippets; it does not send email or provide full message bodies and attachments through the documented integration.
+
+### Google OAuth setup
+
+1. In Google Cloud Console, configure the OAuth consent screen and create an OAuth client ID for a web application.
+2. Register this authorized redirect URI on the OAuth client:
+
+   `http://127.0.0.1:8000/gmail/oauth/callback`
+
+3. Set the following variables in your local `.env`:
+
+   - `GMAIL_CLIENT_ID`: Google OAuth client ID.
+   - `GMAIL_CLIENT_SECRET`: Google OAuth client secret.
+   - `GMAIL_REDIRECT_URI`: must match the registered redirect URI.
+   - `GMAIL_TOKEN_ENCRYPTION_KEY`: Fernet key used to encrypt stored refresh tokens.
+
+   Generate a Fernet key with:
+
+   ```bash
+   uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   ```
+
+4. Restart the API after configuring the values. Keep `.env` and the encryption key private. Back up the key securely; losing it may make stored encrypted tokens unreadable.
+5. Start OAuth for the intended organization and authenticated user, complete Google's consent flow, then check the connection and retrieve message metadata.
+
+The organization-scoped endpoints are:
+
+- `POST /organizations/{organization_id}/gmail/oauth/start` — begin OAuth.
+- `GET /organizations/{organization_id}/gmail/status` — inspect connection status.
+- `GET /organizations/{organization_id}/gmail/messages` — retrieve message metadata and snippets.
+- `GET /gmail/oauth/callback` — handle Google's OAuth redirect.
+
+The callback URI must exactly match `GMAIL_REDIRECT_URI` and the URI registered in Google Cloud Console.
+
+Gmail access is optional. The application also supports ordinary application authentication; Gmail OAuth is not general-purpose SSO.
+
 ## API overview
 
 All organization data lives under `/organizations/{organization_id}/...`.
@@ -149,8 +193,9 @@ All organization data lives under `/organizations/{organization_id}/...`.
 | Documents | upload, list, get, delete; add versions; download a version |
 | Search | `POST /organizations/{id}/search` (hybrid retrieval, no LLM) |
 | Chat | `POST /organizations/{id}/chat` (answer, sources, trace) |
-| Conversations | list, get, delete |
-| Evaluations | datasets, cases (incl. bulk import), runs (`POST` returns `pending`; poll the run), per-case results |
+| Conversations | list, get, delete; export an answer as PDF |
+| Evaluations | datasets, cases (incl. bulk import), runs (`POST` returns `pending`; poll the run), per-case results; export a run report as PDF |
+| Gmail | OAuth connection, connection status, and read-only message metadata/snippets |
 | Ops | `GET /health`, `GET /version` |
 
 ## Project layout

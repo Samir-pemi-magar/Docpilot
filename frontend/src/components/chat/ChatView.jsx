@@ -3,7 +3,7 @@ import MessageBubble from "./MessageBubble";
 import StreamingIndicator from "./StreamingIndicator";
 import ChatInput from "./ChatInput";
 
-export default function ChatView({ messages, isStreaming, streamingText, onSend, error }) {
+export default function ChatView({ messages, isStreaming, streamingText, onSend, error, onDownloadPdf }) {
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -15,7 +15,7 @@ export default function ChatView({ messages, isStreaming, streamingText, onSend,
       {/* Message list */}
       <div className="flex-1 overflow-y-auto py-4 space-y-1">
         {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
+          <MessageBubble key={msg.id} message={msg} onDownloadPdf={onDownloadPdf} />
         ))}
         {isStreaming && <StreamingIndicator text={streamingText} />}
         {error && (
