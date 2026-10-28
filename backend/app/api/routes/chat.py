@@ -637,6 +637,7 @@ async def chat_with_organization_documents(
                 "A name introduction or name-recall shortcut matched. "
                 "No embedding or document retrieval was performed."
             ),
+            status_value="skipped",
         )
     elif small_talk:
         retrieved_chunks = []
@@ -651,6 +652,7 @@ async def chat_with_organization_documents(
                 "Qwen will generate this conversational response without "
                 "document evidence or embedding-based retrieval."
             ),
+            status_value="skipped",
         )
     elif reused_sources is not None:
         retrieved_chunks = []
@@ -665,6 +667,7 @@ async def chat_with_organization_documents(
                 "Reused saved sources from a previous assistant answer; "
                 "no new embedding or retrieval was run."
             ),
+            status_value="skipped",
         )
     elif general_knowledge:
         retrieved_chunks = []
@@ -677,6 +680,7 @@ async def chat_with_organization_documents(
             started_at=request_started,
             result="The question will be answered using general knowledge, "
                    "without treating organization documents as evidence.",
+            status_value="skipped",
         )
     else:
         retrieval_started = time.perf_counter()

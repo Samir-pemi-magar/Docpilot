@@ -1139,6 +1139,7 @@ async def test_small_talk_uses_llm_without_document_retrieval(
 
     trace_by_id = {step["id"]: step for step in data["trace"]}
     assert trace_by_id["retrieval"]["label"] == "Conversational message"
+    assert trace_by_id["retrieval"]["status"] == "skipped"
     assert "generation" in trace_by_id
 
 
@@ -1169,6 +1170,7 @@ async def test_capital_question_uses_general_knowledge_without_retrieval(
 
     trace_by_id = {step["id"]: step for step in data["trace"]}
     assert trace_by_id["retrieval"]["label"] == "General-knowledge question"
+    assert trace_by_id["retrieval"]["status"] == "skipped"
 
 
 @pytest.mark.asyncio

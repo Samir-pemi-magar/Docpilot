@@ -240,7 +240,7 @@ class FakeEvaluationLLM:
 
 
 async def test_start_evaluation_rejected_when_another_run_is_active(
-    client, db_session
+    client, db_session, monkeypatch
 ):
     owner = await create_user(
         db_session, "eval-active-guard@example.com", "Active Guard Owner"
@@ -267,6 +267,18 @@ async def test_start_evaluation_rejected_when_another_run_is_active(
         )
     )
     await db_session.flush()
+
+    # This test checks the active-run guard, not model initialization.
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        get_embedding_provider,
+        lambda: FakeEvaluationEmbeddingProvider(),
+    )
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        get_evaluation_llm_client,
+        lambda: FakeEvaluationLLM(),
+    )
 
     response = await client.post(
         f"/organizations/{organization.id}/evaluation-datasets/"

@@ -15,12 +15,30 @@ const STATUS_ICON = {
       <path d="M3.5 6l2 2 3-3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   ),
+  skipped: (
+    <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+      <circle cx="6" cy="6" r="5.5" stroke="currentColor" strokeWidth="1"/>
+      <path d="M3.5 6h5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+    </svg>
+  ),
   warning: (
     <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
       <path d="M6 1L11 10H1L6 1z" stroke="currentColor" strokeWidth="1"/>
       <path d="M6 5v2.5M6 9h.01" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
     </svg>
   ),
+};
+
+const STATUS_LABEL = {
+  success: "Completed",
+  skipped: "Skipped",
+  warning: "Warning",
+};
+
+const STATUS_COLOR = {
+  success: "text-teal-400",
+  skipped: "text-[var(--muted-foreground)]",
+  warning: "text-amber-400",
 };
 
 export default function ToolCallStep({ step, isLast }) {
@@ -45,8 +63,12 @@ export default function ToolCallStep({ step, isLast }) {
             <span className={`font-mono text-[10px] font-semibold uppercase tracking-wider ${cfg.color}`}>
               {step.tool}
             </span>
-            <span className={`text-[var(--${step.status === "warning" ? "amber" : "teal"}-400)] opacity-70`}>
-              {STATUS_ICON[step.status]}
+            <span
+              title={STATUS_LABEL[step.status] || step.status || "Unknown"}
+              className={`inline-flex items-center gap-1 text-[10px] opacity-80 ${STATUS_COLOR[step.status] || "text-[var(--muted-foreground)]"}`}
+            >
+              {STATUS_ICON[step.status] || null}
+              <span>{STATUS_LABEL[step.status] || step.status || "Unknown"}</span>
             </span>
             <span className="font-mono text-[10px] text-[var(--muted-foreground)] ml-auto">
               {step.duration}ms

@@ -217,8 +217,10 @@ async def test_gmail_callback_creates_connection(
     )
 
     assert response.status_code == 303
+    from app.core.config import get_settings
+
     assert response.headers["location"].startswith(
-        "http://127.0.0.1:8443/?gmail=connected&organization_id="
+        f"{get_settings().frontend_url.rstrip('/')}/?gmail=connected&organization_id="
     )
     assert str(test_organization.id) in response.headers["location"]
 
@@ -268,8 +270,10 @@ async def test_gmail_callback_handles_google_authorization_denial(
     )
 
     assert response.status_code == 303
+    from app.core.config import get_settings
+
     assert response.headers["location"].startswith(
-        "http://127.0.0.1:8443/?gmail=cancelled&organization_id="
+        f"{get_settings().frontend_url.rstrip('/')}/?gmail=cancelled&organization_id="
     )
     assert str(test_organization.id) in response.headers["location"]
 
