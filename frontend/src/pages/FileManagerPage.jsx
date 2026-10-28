@@ -27,6 +27,8 @@ export default function FileManagerPage({ organizationId }) {
   const [uploading, setUploading] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [documentToDelete, setDocumentToDelete] = useState(null);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [versioningId, setVersioningId] = useState(null);
@@ -151,6 +153,63 @@ export default function FileManagerPage({ organizationId }) {
     }
   }
 
+  async function confirmRemoveAllDocuments() {
+    if (deletingAll || deletingId || versioningId || uploading) return;
+
+    const snapshot = [...documents];
+    if (!snapshot.length) {
+      setConfirmDeleteAll(false);
+      return;
+    }
+
+    setDeletingAll(true);
+    setError("");
+    setNotice("");
+
+    let succeeded = 0;
+    const failures = [];
+
+    try {
+      for (const document of snapshot) {
+        try {
+          await api.deleteDocument(organizationId, document.id);
+          succeeded += 1;
+          setDocuments((current) =>
+            current.filter((item) => item.id !== document.id)
+          );
+        } catch (err) {
+          failures.push(
+            `${document.name || document.id}: ${err.message || "Delete failed"}`
+          );
+        }
+      }
+
+      setConfirmDeleteAll(false);
+
+      if (failures.length) {
+        setError(
+          [
+            `${succeeded} of ${snapshot.length} document(s) deleted.`,
+            ...failures,
+          ].join("\\n")
+        );
+      } else {
+        setNotice(`Successfully deleted all ${succeeded} document(s).`);
+      }
+
+      await loadDocuments();
+    } catch (err) {
+      setNotice("");
+      setError(
+        `Bulk deletion could not finish cleanly: ${
+          err.message || "Please refresh the file list and check the results."
+        }`
+      );
+    } finally {
+      setDeletingAll(false);
+    }
+  }
+
   return (
     <div className="flex flex-col flex-1 min-h-0">
       <Header title="File Manager" />
@@ -182,6 +241,23 @@ export default function FileManagerPage({ organizationId }) {
                 className="rounded border border-[var(--border)] px-3 py-2 text-sm text-[var(--foreground)] hover:bg-[var(--muted)] disabled:opacity-50"
               >
                 Refresh
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setError("");
+                  setNotice("");
+                  setConfirmDeleteAll(true);
+                }}
+                disabled={
+                  loading ||
+                  uploading ||
+                  Boolean(deletingId || versioningId || deletingAll) ||
+                  documents.length === 0
+                }
+                className="rounded border border-red-500/50 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 disabled:opacity-50"
+              >
+                Delete all files
               </button>
               <button
                 type="button"
@@ -307,6 +383,61 @@ export default function FileManagerPage({ organizationId }) {
           </p>
         </div>
       </section>
+      {confirmDeleteAll && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget && !deletingAll) {
+              setConfirmDeleteAll(false);
+            }
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-all-title"
+            className="w-full max-w-md rounded-xl border border-[var(--border)] bg-[var(--card)] p-5 shadow-2xl"
+          >
+            <h2
+              id="delete-all-title"
+              className="text-base font-semibold text-[var(--foreground)]"
+            >
+              Delete all files?
+            </h2>
+            <p className="mt-2 text-sm text-[var(--muted-foreground)]">
+              You are about to permanently delete all{" "}
+              <strong className="text-[var(--foreground)]">
+                {documents.length} document(s)
+              </strong>{" "}
+              in this organization, including their stored versions. This
+              cannot be undone.
+            </p>
+            {deletingAll && (
+              <p role="status" className="mt-3 text-sm text-[var(--muted-foreground)]">
+                Deleting documents… {documents.length} document(s) remaining.
+              </p>
+            )}
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                className="rounded-md border border-[var(--border)] px-4 py-2 text-sm hover:bg-[var(--muted)] disabled:opacity-50"
+                onClick={() => setConfirmDeleteAll(false)}
+                disabled={deletingAll}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                onClick={confirmRemoveAllDocuments}
+                disabled={deletingAll || documents.length === 0}
+              >
+                {deletingAll ? "Deleting…" : "Delete permanently"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
       {documentToDelete && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
