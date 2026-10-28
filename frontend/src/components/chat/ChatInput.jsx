@@ -1,12 +1,6 @@
 import { useState, useRef } from "react";
 import Button from "../ui/Button";
 
-const SUGGESTIONS = [
-  "Summarize the key points in my documents.",
-  "What procedures or policies are documented?",
-  "Find important requirements and explain them.",
-];
-
 export default function ChatInput({ onSend, disabled }) {
   const [value, setValue] = useState("");
   const textareaRef = useRef(null);
@@ -42,24 +36,6 @@ export default function ChatInput({ onSend, disabled }) {
 
   return (
     <div className="relative z-10 shrink-0 border-t-2 border-[var(--border)] bg-[var(--card)] px-3 py-4 shadow-[0_-6px_20px_rgba(0,0,0,0.08)] sm:px-5 sm:py-5">
-      {!disabled && value === "" && (
-        <div className="mb-3 flex flex-wrap gap-2">
-          {SUGGESTIONS.map((suggestion) => (
-            <button
-              key={suggestion}
-              type="button"
-              onClick={() => {
-                setValue(suggestion);
-                textareaRef.current?.focus();
-              }}
-              className="max-w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-medium text-[var(--foreground)] transition-colors hover:border-[var(--ring)] hover:bg-[var(--background)] sm:text-sm"
-            >
-              {suggestion}
-            </button>
-          ))}
-        </div>
-      )}
-
       <form
         onSubmit={(e) => {
           e.preventDefault();
