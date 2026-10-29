@@ -550,16 +550,19 @@ export default function EvalDashboard({ organizationId }) {
         );
         if (cancelled) return;
 
-        setRun(latest);
-
         if (latest.status === "completed" || latest.status === "failed") {
-          setRunning(false);
-
           const data = await api.evaluationRunResults(
             organizationId, latest.dataset_id, latest.id
           );
           if (cancelled) return;
+          if (!Array.isArray(data)) {
+            throw new Error(
+              "Unexpected evaluation results response: expected an array."
+            );
+          }
 
+          setRun(latest);
+          setRunning(false);
           setResults(data);
           await loadHistory();
 
@@ -568,6 +571,8 @@ export default function EvalDashboard({ organizationId }) {
           } else {
             setNotice("Evaluation completed. Results loaded from the backend.");
           }
+        } else {
+          setRun(latest);
         }
       } catch (err) {
         if (!cancelled) {
