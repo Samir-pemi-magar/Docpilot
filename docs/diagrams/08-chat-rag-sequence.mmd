@@ -1,6 +1,7 @@
 %% DocPilot - Chat / RAG sequence: POST /organizations/{org}/chat
 %% Single request/response (no streaming on the backend).
-%% Changes vs. previous version: three-list retrieval, adaptive thinking in the LLM client.
+%% Changes vs. previous version: three-list retrieval, adaptive thinking in the LLM client,
+%% trace steps carry a status (the retrieval step is marked skipped on every bypass path).
 sequenceDiagram
     autonumber
     actor U as User
@@ -25,14 +26,14 @@ sequenceDiagram
 
     Note over API: Rule-based routing (regex heuristics)
     alt name introduction or name recall
-        API->>API: canned answer, no retrieval, no LLM
+        API->>API: canned answer, no retrieval, no LLM (retrieval trace step = skipped)
     else source-reference question ("which document...")
         API->>DB: sources of previous assistant message
-        API->>API: answer from saved source names, no LLM
+        API->>API: answer from saved source names, no LLM (retrieval step = skipped)
     else small talk
-        API->>LLM: greeting prompt (no documents)
+        API->>LLM: greeting prompt (no documents, retrieval step = skipped)
     else general-knowledge question
-        API->>LLM: general-knowledge prompt (no documents)
+        API->>LLM: general-knowledge prompt (no documents, retrieval step = skipped)
     else document question
         opt follow-up pattern needs history ("and ...", "what about ...")
             API->>LLM: rewrite as standalone question (history sent here only)
@@ -56,6 +57,6 @@ sequenceDiagram
 
     API->>DB: create conversation if new (title = first 200 chars of query)
     API->>DB: INSERT user message + assistant message (with sources JSON), COMMIT
-    API-->>FE: ChatResponse {conversation_id, answer, sources, trace[]}
-    FE-->>U: render answer, sources panel, trace panel
+    API-->>FE: ChatResponse {conversation_id, answer, sources, trace[] with status success or skipped}
+    FE-->>U: render answer, sources panel, trace panel (Completed / Skipped badges)
     FE->>API: GET /conversations (refresh sidebar)

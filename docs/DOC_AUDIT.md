@@ -1,8 +1,28 @@
 # Documentation audit
 
-Two review passes are recorded here. **Pass 2 (this revision)** is first; pass 1 is kept below for history. This is a one-time review aid; delete it once you have read it.
+Three review passes are recorded here, newest first. Pass 1 is kept at the bottom for history. This is a one-time review aid; delete it once you have read it.
 
 Method (both passes): static reading of the repository. No tests or services were run, and the Gmail integration was not exercised against Google. Mermaid syntax of every `.mmd` file and the README diagram was checked with the Mermaid parser.
+
+---
+
+## Pass 3: trace statuses, Delete all files, small UI and test changes
+
+Snapshot compared against the previous one: only `chat.py`, `ChatInput.jsx`, `EvalDashboard.jsx`, `ToolCallStep.jsx`, `FileManagerPage.jsx` and three test files changed. `pyproject.toml`, `.env.example`, `Makefile`, `compose.yaml`, `config.py`, all models, migrations and other services are unchanged (head still `a7c19d4e2b61`, 17 tables, 372 tests).
+
+| # | What changed in the code | Documentation updated |
+|---|---|---|
+| 1 | Chat trace steps carry a visible status; the retrieval step is `skipped` on the four bypass paths (name shortcut, small talk, reused sources, general knowledge); the UI shows Completed / Skipped / Warning badges | README features, notes 1.1 and 1.5, diagram 08 |
+| 2 | File Manager gains **Delete all files** (client-side loop over the existing delete endpoint) | README features and limitations, notes 1.1 and item 22, diagram 11 |
+| 3 | Eval dashboard marks a run finished only after its results load and validates the response shape | notes 1.2, diagram 10 |
+| 4 | Chat suggestion chips removed from the input box | no documentation referenced them |
+| 5 | Test hardening only (no new tests): evaluation guard test stubs dependencies; Gmail redirect tests read `frontend_url`; two chat tests assert `skipped` | notes 1.8 |
+
+New finding (item 22 in the notes): **Delete all files** is visible to every member and joins its failure messages with a literal `\n`.
+
+Still open from pass 2 (unchanged in code): `reportlab` is dev-only, `FRONTEND_URL` default does not match `make dev`, global evaluation lock, stateless refresh tokens, org-wide visibility of imported mail, Gmail lifecycle gaps. The "stale in-repo edits" note from pass 2 is removed because the repository now contains the pass-2 documentation.
+
+Method: static reading and `diff` against the previous snapshot; nothing was run.
 
 ---
 

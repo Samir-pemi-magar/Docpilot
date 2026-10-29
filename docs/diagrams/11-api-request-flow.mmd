@@ -29,7 +29,7 @@ flowchart LR
     end
 
     subgraph adm["Owner or admin (require_organization_roles)"]
-        a1["POST documents, POST documents/ID/versions<br/>DELETE documents/ID"]
+        a1["POST documents, POST documents/ID/versions<br/>DELETE documents/ID<br/>(SPA Delete all files = one DELETE per document, no bulk endpoint)"]
         a2["PATCH organization"]
         a3["POST, PATCH, DELETE .../members"]
         a4["POST .../gmail/messages/ID/import"]

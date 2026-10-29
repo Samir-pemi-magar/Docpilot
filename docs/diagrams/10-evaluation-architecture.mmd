@@ -21,7 +21,7 @@ flowchart TD
     e409["409 An evaluation is already running.<br/>Wait for it to finish"]
     run["INSERT evaluation_runs status = pending, commit<br/>respond 201 immediately"]
     bgt["background_tasks.add_task<br/>run_evaluation_background<br/>own DB session from get_evaluation_session_factory"]
-    ui_poll["SPA polls GET .../runs/ID every 800 ms<br/>shows 'Queued' (pending) or 'In progress' (running),<br/>then loads results.<br/>After login or reload the dashboard restores<br/>an active run found in the run history"]
+    ui_poll["SPA polls GET .../runs/ID every 800 ms<br/>shows 'Queued' (pending) or 'In progress' (running),<br/>then loads results (the run counts as finished<br/>only once results have loaded successfully).<br/>After login or reload the dashboard restores<br/>an active run found in the run history"]
 
     subgraph per["run_evaluation: status = running; for each case in position order (sequential)"]
         direction TB
