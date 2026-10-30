@@ -8,6 +8,7 @@ from app.embeddings.models import BatchEmbeddingResult, EmbeddingResult
 from app.main import app
 from app.services.evaluation_runner import (
     _answer_quality_metrics,
+    _evaluate_essential_fact_coverage,
     get_evaluation_llm_client,
 )
 from app.models.document import Document
@@ -1003,18 +1004,87 @@ async def test_delete_all_cases_only_affects_selected_dataset(client, db_session
 
 
 
-def test_essential_fact_coverage_supports_strings_and_fact_objects():
-    metrics = _answer_quality_metrics(
-        "The APPLICATION deadline is in the notice.",
+async def test_essential_fact_coverage_accepts_paraphrases_and_fact_objects():
+    class FakeJudge:
+        async def generate(self, messages):
+            payload = json.loads(messages[1]["content"])
+            assert payload["expected_facts"] == [
+                {"index": 0, "statement": "application deadline"},
+                {"index": 1, "statement": "required documents"},
+            ]
+            assert payload["generated_answer"] == (
+                "Submit your application before the closing date. "
+                "Include all requested paperwork."
+            )
+            return json.dumps({
+                "results": [
+                    {"index": 0, "supported": True},
+                    {"index": 1, "supported": True},
+                ]
+            })
+
+    score = await _evaluate_essential_fact_coverage(
+        (
+            "Submit your application before the closing date. "
+            "Include all requested paperwork."
+        ),
         {
             "essential_facts": [
                 "application deadline",
                 {"fact_id": "F1", "statement": "required documents"},
             ]
         },
+        FakeJudge(),
     )
 
-    assert metrics["essential_fact_coverage"] == 0.5
+    assert score == 1.0
+
+
+async def test_essential_fact_coverage_calculates_partial_score():
+    class FakeJudge:
+        async def generate(self, messages):
+            return json.dumps({
+                "results": [
+                    {"index": 0, "supported": True},
+                    {"index": 1, "supported": False},
+                ]
+            })
+
+    score = await _evaluate_essential_fact_coverage(
+        "The answer includes one of the two expected facts.",
+        {"essential_facts": ["fact one", "fact two"]},
+        FakeJudge(),
+    )
+
+    assert score == 0.5
+
+
+async def test_essential_fact_coverage_ignores_invalid_judge_response():
+    class FakeJudge:
+        async def generate(self, messages):
+            return '{"results":[{"index":0,"supported":"yes"}]}'
+
+    score = await _evaluate_essential_fact_coverage(
+        "An answer.",
+        {"essential_facts": ["expected fact"]},
+        FakeJudge(),
+    )
+
+    assert score is None
+
+
+async def test_essential_fact_coverage_skips_empty_facts_without_calling_judge():
+    class FakeJudge:
+        async def generate(self, messages):
+            raise AssertionError("Judge should not be called")
+
+    score = await _evaluate_essential_fact_coverage(
+        "An answer.",
+        {"essential_facts": []},
+        FakeJudge(),
+    )
+
+    assert score is None
 
 
 def test_answerability_compliance_checks_abstention():
